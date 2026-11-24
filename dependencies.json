@@ -1,0 +1,397 @@
+{
+    "release": "0.42.0-r6",
+    "repository": "Doddddd/libmpv-build",
+    "toolchains": {
+        "android": {
+            "version": "r29",
+            "revision": "29.0.14206865",
+            "url": "https://dl.google.com/android/repository/android-ndk-r29-linux.zip",
+            "sha256": "4abbbcdc842f3d4879206e9695d52709603e52dd68d3c1fff04b3b5e7a308ecf",
+            "sha1": "87e2bb7e9be5d6a1c6cdf5ec40dd4e0c6d07c30b",
+            "digestEvidence": "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=android-ndk&id=f59f8cf782ea087a859213bf84301002fbe91e8e",
+            "officialManifest": "https://dl.google.com/android/repository/repository2-3.xml"
+        },
+        "windows": {
+            "version": "20261117",
+            "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261117/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64.tar.xz",
+            "sha256": "e7a15a49a2ea95e9f3d8a9d0cfabe5052a4b10fb4777cc54de5a8c27b64bb701"
+        },
+        "linux": {
+            "version": "Ubuntu 22.04",
+            "glibc": "2.35",
+            "image": "ubuntu:22.04@sha256:f64b2ffc2f10ab8f8505aa56b2664bd846cbb9df87c7e2532e30f7667021c0e6",
+            "meson": "1.12.1",
+            "llvm": "14"
+        }
+    },
+    "dependencies": {
+        "zlib": {
+            "repository": "https://github.com/madler/zlib.git",
+            "tagPattern": "v(\\d+\\.\\d+(?:\\.\\d+)?)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "v1.4",
+            "version": "1.4",
+            "commit": "99623ef7097352da7993ba614161fd6a311e046e",
+            "date": "2026-11-04T20:32:10-08:00",
+            "sha256": "20cb4bd44248f10e89724108d554f4f9ff31e9a577ca04b34b3d321ccb40bcc0"
+        },
+        "dav1d": {
+            "repository": "https://code.videolan.org/videolan/dav1d.git",
+            "tagPattern": "(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "1.5.5",
+            "version": "1.5.5",
+            "commit": "6c7bee685677fd997a431302be4fea8ea4017606",
+            "date": "2026-11-16T16:53:07+01:00",
+            "sha256": "0bceac2083ea5c997663db85bff180815534e4326df1794b6582dabf88eefd08"
+        },
+        "freetype": {
+            "repository": "https://gitlab.freedesktop.org/freetype/freetype.git",
+            "tagPattern": "VER-(\\d+-\\d+(?:-\\d+)?)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "VER-2-15-0",
+            "version": "2.15.0",
+            "commit": "37515cf56ba3349656049edbed89ffc6f6466f2d",
+            "date": "2026-10-11T22:46:16+02:00",
+            "sha256": "1622def7bda937975e0f9fb6fb7f45320b1ead0e619f539ee1426066c106817d"
+        },
+        "fribidi": {
+            "repository": "https://github.com/fribidi/fribidi.git",
+            "tagPattern": "v(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "v1.0.18",
+            "version": "1.0.18",
+            "commit": "15393e4937aa95bcf865d92143735746aeb654fa",
+            "date": "2026-10-30T00:18:10+02:00",
+            "sha256": "36f7113ca0225bb8c5ac1b536351673c8fa9ebfbdc8ba074779e54e88bd394c4"
+        },
+        "harfbuzz": {
+            "repository": "https://github.com/harfbuzz/harfbuzz.git",
+            "tagPattern": "(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "15.2.0",
+            "version": "15.2.0",
+            "commit": "ed51d202cfd0c29372d3ee056eb0dc715688a410",
+            "date": "2026-11-19T17:05:21-06:00",
+            "sha256": "e8833ffdc726f1c739f69ff0e48ae4b4cfda4addcf72c138238292fffedff5e4"
+        },
+        "libunibreak": {
+            "repository": "https://github.com/adah1972/libunibreak.git",
+            "tagPattern": "libunibreak_(\\d+_\\d+(?:_\\d+)?)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "libunibreak_8_0_1",
+            "version": "8.0.1",
+            "commit": "ff24f284a567a006c183b3507b6c650d6ec68b94",
+            "date": "2026-11-16T21:10:14+08:00",
+            "sha256": "6d72581b3443a5c9ea112abb4467319f1d1cea7696efea5251de652420967a83"
+        },
+        "libxml2": {
+            "repository": "https://gitlab.gnome.org/GNOME/libxml2.git",
+            "tagPattern": "v(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "linux-x64"
+            ],
+            "tag": "v2.15.4",
+            "version": "2.15.4",
+            "commit": "96498992efa48d52b0e8b83058bd88dbdaf153c1",
+            "date": "2026-09-01T18:16:32+02:00",
+            "sha256": "01bfec6c1c3742473c049d952e153e2236a31330668a6a4904641de937e29ff4"
+        },
+        "fontconfig": {
+            "repository": "https://gitlab.freedesktop.org/fontconfig/fontconfig.git",
+            "tagPattern": "(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "linux-x64"
+            ],
+            "tag": "2.18.4",
+            "version": "2.18.4",
+            "commit": "fbe1d59967aabb7b05e785c7a86704a1ece8fa6f",
+            "date": "2026-11-18T20:53:03+09:00",
+            "sha256": "27c3551245f704d782276fe0213e1c035479f4e16df624ec43286248607bd453"
+        },
+        "libass": {
+            "repository": "https://github.com/libass/libass.git",
+            "tagPattern": "(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "0.17.5",
+            "version": "0.17.5",
+            "commit": "4a05d8127f525943ebf45fdc6497c9e665947f0d",
+            "date": "2026-06-24T00:00:00Z",
+            "sha256": "0c7f190157c14d8ce18b29128e4858e2ac1e1d2686dc2e2c331d515f3f428e4b"
+        },
+        "libplacebo": {
+            "repository": "https://github.com/haasn/libplacebo.git",
+            "tagPattern": "v(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "v7.387.0",
+            "version": "7.387.0",
+            "commit": "275f7dea27924cdd34ab2e6c20e448b6bc4fab65",
+            "date": "2026-10-25T17:55:23Z",
+            "sha256": "00139c3591c3309f82f6843867e2e7198983685b551f6f0bf44ebabd84174596"
+        },
+        "ffmpeg": {
+            "repository": "https://github.com/FFmpeg/FFmpeg.git",
+            "tagPattern": "n(\\d+\\.\\d+(?:\\.\\d+)?)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "n9.1",
+            "version": "9.1",
+            "commit": "74e4393595cf2b5857f0da925c4e0dd74ea306e5",
+            "date": "2026-11-19T19:47:40+01:00",
+            "sha256": "2fddccc5ee6655819c5f747cdb4ef8b15b0a49922fb638d6bce747f2eb76b662"
+        },
+        "mpv": {
+            "repository": "https://github.com/mpv-player/mpv.git",
+            "tagPattern": "v(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "v0.42.0",
+            "version": "0.42.0",
+            "commit": "b0841e8c4d156b8403dc1876c4cbd9011eb583f3",
+            "date": "2026-11-05T00:33:41+01:00",
+            "sha256": "2310698e92255b865dc5b298d85baa1cd58d0c64a12d9adfb6a582fccc63cdef"
+        },
+        "shaderc": {
+            "repository": "https://github.com/google/shaderc.git",
+            "tagPattern": "v(\\d+\\.\\d+)",
+            "targets": [
+                "windows-x64"
+            ],
+            "tag": "v2026.4",
+            "version": "2026.4",
+            "commit": "b64fd42c4a2a9d501c47aca5d3571f7673a5e9cc",
+            "date": "2026-09-11T14:56:39-04:00",
+            "sha256": "af3634c1077198c6cd8b641b41e2bc04b09758c91cee2e9239ee276a6e4c4cf3"
+        },
+        "spirv-cross": {
+            "repository": "https://github.com/KhronosGroup/SPIRV-Cross.git",
+            "tagPattern": "vulkan-sdk-(\\d+\\.\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "windows-x64"
+            ],
+            "tag": "vulkan-sdk-1.4.363.0",
+            "version": "1.4.363.0",
+            "commit": "f11ba9f0b21ba8fc15153d50a2a1ae31ab1cf8f7",
+            "date": "2026-09-16T13:27:19+02:00",
+            "sha256": "4468489ba56904a1c2512578be7d6e5de76068d9d6c37b9025805ce3895ccaf7"
+        },
+        "libplacebo_glad": {
+            "repository": "https://github.com/Dav1dde/glad",
+            "tag": null,
+            "version": "git-73db193f853e",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "pinFrom": {
+                "type": "gitlink",
+                "parent": "libplacebo",
+                "path": "3rdparty/glad"
+            },
+            "commit": "73db193f853e2ee079bf3ca8a64aa2eaf6459043",
+            "date": "2024-09-29T12:30:44+02:00",
+            "sha256": "38e942b6812c15a1e01e194f6ff6e6a24b81911b95289c5a4d5108b9d0e1d93b"
+        },
+        "libplacebo_jinja": {
+            "repository": "https://github.com/pallets/jinja",
+            "tag": null,
+            "version": "git-15206881c006",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "pinFrom": {
+                "type": "gitlink",
+                "parent": "libplacebo",
+                "path": "3rdparty/jinja"
+            },
+            "commit": "15206881c006c79667fe5154fe80c01c65410679",
+            "date": "2025-03-05T11:51:17-08:00",
+            "sha256": "8afde8c77f795b6b0c4a6a999d3b0c996bcf054cb35e09c691945dd0cd7d3916"
+        },
+        "libplacebo_markupsafe": {
+            "repository": "https://github.com/pallets/markupsafe",
+            "tag": null,
+            "version": "git-297fc8e356e6",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "pinFrom": {
+                "type": "gitlink",
+                "parent": "libplacebo",
+                "path": "3rdparty/markupsafe"
+            },
+            "commit": "297fc8e356e6836a62087949245d09a28e9f1b13",
+            "date": "2025-09-27T11:08:12-07:00",
+            "sha256": "db8ce59f4e1949d6b50142282be245122dfccc5dd6ebc823e826a86dc473f1ad"
+        },
+        "libplacebo_fast_float": {
+            "repository": "https://github.com/fastfloat/fast_float.git",
+            "tag": null,
+            "version": "git-97b54ca9e75f",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "pinFrom": {
+                "type": "gitlink",
+                "parent": "libplacebo",
+                "path": "3rdparty/fast_float"
+            },
+            "commit": "97b54ca9e75f5303507699d27c6b4f4efe4641a1",
+            "date": "2025-12-31T13:12:46-05:00",
+            "sha256": "586b86134ac5268b4a44650e9f6fe238c1495776c28afcdfb8b904e189c4c3ce"
+        },
+        "freetype_dlg": {
+            "repository": "https://github.com/nyorain/dlg.git",
+            "tag": null,
+            "version": "git-395ccad2c1e0",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "pinFrom": {
+                "type": "gitlink",
+                "parent": "freetype",
+                "path": "subprojects/dlg"
+            },
+            "commit": "395ccad2c1e0daae535c4d20bb0a3f2424648e17",
+            "date": "2025-07-20T12:54:27+02:00",
+            "sha256": "e231af15a436c58b4840bfb84a7d270251b9f45e4c61889cabac06237cccb60c"
+        },
+        "glslang": {
+            "repository": "https://github.com/KhronosGroup/glslang.git",
+            "tag": null,
+            "version": "git-e1b562a8bed2",
+            "targets": [
+                "windows-x64"
+            ],
+            "pinFrom": {
+                "type": "deps",
+                "parent": "shaderc",
+                "variable": "glslang_revision"
+            },
+            "commit": "e1b562a8bed273a02f30b59b66a5d499793cede5",
+            "date": "2026-09-11T13:38:23-04:00",
+            "sha256": "77f9bdc1a3501932865743457fdcf8ad7b11f6893c02ccbba6af0ff1382eba30"
+        },
+        "spirv-headers": {
+            "repository": "https://github.com/KhronosGroup/SPIRV-Headers.git",
+            "tag": null,
+            "version": "git-04fd3caa1e82",
+            "targets": [
+                "windows-x64"
+            ],
+            "pinFrom": {
+                "type": "deps",
+                "parent": "shaderc",
+                "variable": "spirv_headers_revision"
+            },
+            "commit": "04fd3caa1e8267e4d95c806cad901181728e1006",
+            "date": "2026-09-09T08:45:38-07:00",
+            "sha256": "67beaead2087ea20b0501a52052063f60039910c37a6cb0f1a051a772b86a5c6"
+        },
+        "spirv-tools": {
+            "repository": "https://github.com/KhronosGroup/SPIRV-Tools.git",
+            "tag": null,
+            "version": "git-ef96ed763b43",
+            "targets": [
+                "windows-x64"
+            ],
+            "pinFrom": {
+                "type": "deps",
+                "parent": "shaderc",
+                "variable": "spirv_tools_revision"
+            },
+            "commit": "ef96ed763b43b59b33b31b362f09a02b729fa1c9",
+            "date": "2026-09-10T09:28:18-04:00",
+            "sha256": "929c74449a5dabaa01b7b1bdb3049bc8ea7e7e0dd69f6bdaf6f3c9c0a0c3273a"
+        },
+        "vulkan-headers": {
+            "repository": "https://github.com/KhronosGroup/Vulkan-Headers.git",
+            "tag": "vulkan-sdk-1.4.363.0",
+            "tagPattern": "vulkan-sdk-(\\d+\\.\\d+\\.\\d+\\.\\d+)",
+            "version": "1.4.363.0",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "commit": "6802bb4733b63ed5efd3adb308a6c885ef180ea1",
+            "date": "2026-09-18T01:47:48+01:00",
+            "sha256": "66f2488c977c1d26337d608d58c39a8a8f5c1c9a48a24331d5814b69736ca35e"
+        }
+    },
+    "buildTools": {
+        "meson": {
+            "version": "1.12.1",
+            "url": "https://files.pythonhosted.org/packages/source/m/meson/meson-1.12.1.tar.gz",
+            "sha256": "ab0a6ca09f8ef70c564c8241fb5a23957886a0b53fb58412b5e07eaf07dba743",
+            "wheelSha256": "930bc7542cbd9f57009e182fd014eba48cf1a0180a7b9006d2d32d8f168d8b02"
+        }
+    }
+}

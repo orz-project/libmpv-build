@@ -1,0 +1,8 @@
+.cache/
+.github/
+.gitignore
+.git/
+build/
+dist/
+**/*.py[cod]
+**/__pycache__/

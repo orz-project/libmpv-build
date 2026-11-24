@@ -1,0 +1,97 @@
+{
+    "android-arm64-v8a": {
+        "system": "android",
+        "cpu": "aarch64",
+        "triple": "aarch64-linux-android",
+        "api": 28,
+        "library": "libmpv.so",
+        "libass": [
+            "--enable-libunibreak",
+            "--enable-fontconfig",
+            "--disable-directwrite"
+        ],
+        "mpv": [
+            "audiotrack=enabled",
+            "egl-android=enabled",
+            "android-media-ndk=enabled"
+        ],
+        "ffmpeg": [
+            "--enable-jni",
+            "--enable-mediacodec"
+        ]
+    },
+    "android-x86_64": {
+        "system": "android",
+        "cpu": "x86_64",
+        "triple": "x86_64-linux-android",
+        "api": 28,
+        "library": "libmpv.so",
+        "libass": [
+            "--enable-libunibreak",
+            "--enable-fontconfig",
+            "--disable-directwrite"
+        ],
+        "mpv": [
+            "audiotrack=enabled",
+            "egl-android=enabled",
+            "android-media-ndk=enabled"
+        ],
+        "ffmpeg": [
+            "--enable-jni",
+            "--enable-mediacodec"
+        ]
+    },
+    "windows-x64": {
+        "system": "windows",
+        "cpu": "x86_64",
+        "triple": "x86_64-w64-mingw32",
+        "library": "libmpv-2.dll",
+        "libass": [
+            "--enable-libunibreak",
+            "--disable-fontconfig",
+            "--enable-directwrite"
+        ],
+        "mpv": [
+            "d3d11=enabled",
+            "gl-win32=enabled",
+            "gl-dxinterop=enabled",
+            "d3d-hwaccel=enabled",
+            "d3d9-hwaccel=enabled",
+            "gl-dxinterop-d3d9=enabled",
+            "wasapi=enabled",
+            "shaderc=enabled",
+            "spirv-cross=enabled",
+            "win32-threads=enabled"
+        ],
+        "ffmpeg": [
+            "--enable-d3d11va",
+            "--enable-dxva2"
+        ]
+    },
+    "linux-x64": {
+        "system": "linux",
+        "cpu": "x86_64",
+        "triple": "x86_64-linux-gnu",
+        "library": "libmpv.so.2",
+        "libass": [
+            "--enable-libunibreak",
+            "--enable-fontconfig",
+            "--disable-directwrite"
+        ],
+        "mpv": [
+            "x11=enabled",
+            "gl-x11=enabled",
+            "egl=enabled",
+            "vaapi=enabled",
+            "vaapi-x11=enabled",
+            "vdpau=enabled",
+            "pulse=enabled",
+            "alsa=enabled",
+            "iconv=enabled"
+        ],
+        "ffmpeg": [
+            "--enable-vaapi",
+            "--enable-vdpau"
+        ]
+    }
+}

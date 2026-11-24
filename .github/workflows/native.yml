@@ -1,0 +1,177 @@
+name: Locked libmpv runtimes
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub Release
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 20 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: libmpv-maintenance
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run pure-stdlib unit tests
+        run: python3 -m unittest discover -s tests -v
+
+  update:
+    needs: test
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      changed: ${{ steps.lock.outputs.changed }}
+      commit: ${{ steps.lock.outputs.commit }}
+      release: ${{ steps.lock.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Restore source archive cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: native-sources-${{ hashFiles('dependencies.json') }}
+          restore-keys: native-sources-
+      - name: Check stable releases and commit the complete lock first
+        id: lock
+        run: |
+          git config user.name libmpv-build
+          git config user.email libmpv-build@users.noreply.github.com
+          python3 -m libmpv_build update --write --commit --github-output "$GITHUB_OUTPUT"
+      - name: Preserve the dependency update before any build
+        if: steps.lock.outputs.changed == 'true'
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: git push origin "HEAD:$BRANCH"
+
+  build:
+    needs: [test, update]
+    if: (github.event_name == 'schedule' && needs.update.outputs.changed == 'true') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [android-arm64-v8a, android-x86_64, windows-x64, linux-x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.update.outputs.commit }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .cache
+            build/${{ matrix.target }}
+          key: native-${{ matrix.target }}-${{ hashFiles('dependencies.json', 'libmpv_build/**', 'targets.json', 'Dockerfile', 'patches/**') }}
+          restore-keys: native-${{ matrix.target }}-
+      - name: Build and verify the locked target
+        run: |
+          mkdir -p build/logs
+          set -o pipefail
+          python3 -m libmpv_build build --target ${{ matrix.target }} --jobs 4 --container 2>&1 | tee build/logs/${{ matrix.target }}.log
+      - name: Preserve built artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/libmpv-*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+      - name: Preserve logs even when a target fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.target }}
+          path: |
+            build/logs/**
+            build/${{ matrix.target }}/builddirs/**/meson-logs/meson-log.txt
+            build/${{ matrix.target }}/builddirs/ffmpeg/ffbuild/config.log
+          if-no-files-found: warn
+
+  release:
+    needs: [update, build]
+    if: (github.event_name == 'schedule' && needs.update.outputs.changed == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.update.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-arm64-v8a
+          path: artifacts/android-arm64-v8a
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-x86_64
+          path: artifacts/android-x86_64
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: artifacts/windows-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x64
+          path: artifacts/linux-x64
+      - name: Assemble release assets and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ needs.update.outputs.release }}
+          COMMIT: ${{ needs.update.outputs.commit }}
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE#mpv-}"
+          mkdir -p release-files
+          for target in android-arm64-v8a android-x86_64 windows-x64 linux-x64; do
+            file="libmpv-${VERSION}-${target}.zip"
+            src="$(find "artifacts/${target}" -type f -name "$file" -print -quit)"
+            test -n "$src"
+            cp "$src" "release-files/${file}"
+          done
+          (cd release-files && sha256sum libmpv-*.zip > SHA256SUMS)
+          python3 -m libmpv_build release-notes \
+            --release "$RELEASE" \
+            --commit "$COMMIT" \
+            --sums release-files/SHA256SUMS \
+            --output release-notes.md
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ needs.update.outputs.release }}
+          COMMIT: ${{ needs.update.outputs.commit }}
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE#mpv-}"
+          existing_tag="$(git ls-remote --tags origin "refs/tags/$TAG")"
+          if test -n "$existing_tag"; then
+            echo "Tag $TAG already exists; refusing to overwrite immutable tag" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite immutable tag" >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            release-files/libmpv-*.zip \
+            release-files/SHA256SUMS \
+            --target "$COMMIT" \
+            --title "$TAG" \
+            --notes-file release-notes.md

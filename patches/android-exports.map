@@ -1,0 +1,7 @@
+{
+  global:
+    mpv_*;
+    av_jni_set_java_vm;
+  local:
+    *;
+};
