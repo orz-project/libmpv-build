@@ -14,7 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import ROOT
-from .config import SHA256_RE, LockFile, TargetProfile, validate_https_url
+from .config import (
+    BUILD_CONFIG,
+    SHA256_RE,
+    LockFile,
+    TargetProfile,
+    validate_https_url,
+)
 from .fs import (
     archive_hash_tree,
     atomic_replace_dir,
@@ -47,6 +53,44 @@ class ToolchainContext:
     cxxflags: list[str]
     ldflags: list[str]
     env: dict[str, str]
+    llvm_version: str | None = None
+
+    def cflags_for(
+        self, opt: str = "Oz", *, hidden_visibility: bool = True
+    ) -> list[str]:
+        flags = [
+            flag
+            for flag in self.cflags
+            if not flag.startswith("-O")
+            and (hidden_visibility or flag != "-fvisibility=hidden")
+        ]
+        return [f"-{opt}", *flags]
+
+    def cxxflags_for(
+        self, opt: str = "Oz", *, hidden_visibility: bool = True
+    ) -> list[str]:
+        flags = [
+            flag
+            for flag in self.cxxflags
+            if not flag.startswith("-O")
+            and (
+                hidden_visibility
+                or flag not in ("-fvisibility=hidden", "-fvisibility-inlines-hidden")
+            )
+        ]
+        return [f"-{opt}", *flags]
+
+    def env_for(
+        self, opt: str = "Oz", *, hidden_visibility: bool = True
+    ) -> dict[str, str]:
+        env = self.env.copy()
+        env["CFLAGS"] = shlex.join(
+            self.cflags_for(opt, hidden_visibility=hidden_visibility)
+        )
+        env["CXXFLAGS"] = shlex.join(
+            self.cxxflags_for(opt, hidden_visibility=hidden_visibility)
+        )
+        return env
 
 
 def restore_toolchain_archive(
@@ -253,6 +297,7 @@ def prepare_toolchain(
     _strip_host_compiler_env(env)
     toolroot: Path | None = None
     windres: str | None = None
+    llvm_version: str | None = None
 
     if profile.system == "android":
         toolroot = resolve_android_ndk(lock, ndk, cache, verify_cache=verify_cache)
@@ -284,21 +329,29 @@ def prepare_toolchain(
             raise RuntimeError(
                 "Linux builds require the pinned Ubuntu 22.04 container; run with --container"
             )
-        cc = Path(require_executable("clang-14"))
-        cxx = Path(require_executable("clang++-14"))
+        llvm_version = str(lock.toolchains["linux"].raw["llvm"])
+        cc = Path(require_executable(f"clang-{llvm_version}"))
+        cxx = Path(require_executable(f"clang++-{llvm_version}"))
         binaries = cc.parent
 
     for tool in (cc, cxx):
         if not tool.is_file():
             raise RuntimeError(f"Compiler is missing: {tool}")
 
-    env["PATH"] = str(binaries) + os.pathsep + env.get("PATH", "")
+    env["PATH"] = (
+        str(prefix / "bin")
+        + os.pathsep
+        + str(binaries)
+        + os.pathsep
+        + env.get("PATH", "")
+    )
     if profile.system == "linux":
-        ar = require_executable("llvm-ar-14")
-        ranlib = require_executable("llvm-ranlib-14")
-        nm = require_executable("llvm-nm-14")
-        strip = require_executable("llvm-strip-14")
-        objcopy = require_executable("llvm-objcopy-14")
+        assert llvm_version is not None
+        ar = require_executable(f"llvm-ar-{llvm_version}")
+        ranlib = require_executable(f"llvm-ranlib-{llvm_version}")
+        nm = require_executable(f"llvm-nm-{llvm_version}")
+        strip = require_executable(f"llvm-strip-{llvm_version}")
+        objcopy = require_executable(f"llvm-objcopy-{llvm_version}")
     else:
         tools: dict[str, str] = {}
         for attr, name in (
@@ -320,28 +373,21 @@ def prepare_toolchain(
         strip = tools["strip"]
         objcopy = tools["objcopy"]
 
+    tc_cfg = BUILD_CONFIG.toolchain
+    march_flag = f"-march={tc_cfg.march[profile.cpu]}"
+    sys_cfg = tc_cfg.systems[profile.system]
     cflags = [
-        "-Os",
-        "-fPIC",
-        "-ffunction-sections",
-        "-fdata-sections",
-        "-flto=thin",
-        "-fno-ident",
+        f"-{tc_cfg.default_opt}",
+        march_flag,
+        *tc_cfg.common_cflags,
+        f"-flto={tc_cfg.lto}",
         f"-ffile-prefix-map={ROOT}=.",
         f"-I{prefix}/include",
+        *sys_cfg.cflags,
     ]
-    ldflags = ["-fuse-ld=lld", "-Wl,--gc-sections", "-Wl,--icf=safe"]
-    if profile.system == "linux":
-        ldflags[0] = "-fuse-ld=lld-14"
-    elif profile.system == "windows":
-        cflags += ["-D_WIN32_WINNT=0x0A00", "-DWINVER=0x0A00", "-DLIBXML_STATIC"]
-        ldflags += ["-static"]
-    elif profile.system == "android":
-        ldflags += ["-Wl,-z,max-page-size=16384"]
-
-    cxxflags = cflags + (
-        ["-static-libstdc++"] if profile.system in ("android", "windows") else []
-    )
+    linker = f"-fuse-ld=lld-{llvm_version}" if profile.system == "linux" else "-fuse-ld=lld"
+    ldflags = [linker, *tc_cfg.common_ldflags, *sys_cfg.ldflags]
+    cxxflags = [*cflags, *sys_cfg.cxxflags]
 
     env.update(
         CC=str(cc),
@@ -384,4 +430,5 @@ def prepare_toolchain(
         cxxflags=cxxflags,
         ldflags=ldflags,
         env=env,
+        llvm_version=llvm_version,
     )

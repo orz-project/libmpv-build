@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from . import ROOT
-from .config import load_lock, validate_https_url
+from .config import BUILD_CONFIG, load_lock, validate_https_url
 from .fs import atomic_replace_dir, atomic_write_text, extract_archive_safe
 from .locks import file_lock
 from .process import run_retry
@@ -59,18 +59,22 @@ def resolve_one(item: tuple[str, dict], cache: Path, initial: bool) -> tuple[str
 def resolve_children(lock_raw: dict, cache: Path) -> None:
     """Pin build-required Git submodules and shaderc DEPS to their released parent."""
     dependencies = lock_raw["dependencies"]
-    needed_gitlinks = {
-        "libplacebo": {
-            "3rdparty/glad",
-            "3rdparty/jinja",
-            "3rdparty/markupsafe",
-            "3rdparty/fast_float",
-        },
-        "freetype": {"subprojects/dlg"},
-    }
+    needed_gitlinks = BUILD_CONFIG.update.required_gitlinks
     for parent, wanted in needed_gitlinks.items():
         if parent not in dependencies:
             continue
+        # Rebuild the parent's complete pinned-child set on every update.  A
+        # released parent may drop a submodule; retaining the old record would
+        # make source_children() materialize stale code at that path.
+        for child, record in list(dependencies.items()):
+            pin = record.get("pinFrom")
+            if (
+                child != parent
+                and isinstance(pin, dict)
+                and pin.get("type") == "gitlink"
+                and pin.get("parent") == parent
+            ):
+                del dependencies[child]
         found: set[str] = set()
         for module in gitlinks(parent, dependencies[parent], cache):
             if module["path"] not in wanted:
@@ -88,6 +92,11 @@ def resolve_children(lock_raw: dict, cache: Path) -> None:
                     "path": module["path"],
                 },
             }
+            existing = dependencies.get(name)
+            if existing is not None and existing.get("pinFrom") != record["pinFrom"]:
+                raise ValueError(
+                    f"Pinned dependency name collision: {name}"
+                )
             print(f"Resolving {name} {module['commit'][:12]}", flush=True)
             dependencies[name] = resolve_dependency(
                 name, record, cache, module["commit"]
@@ -98,27 +107,19 @@ def resolve_children(lock_raw: dict, cache: Path) -> None:
             )
 
     if "shaderc" in dependencies:
+        for child, record in list(dependencies.items()):
+            pin = record.get("pinFrom")
+            if (
+                isinstance(pin, dict)
+                and pin.get("type") == "deps"
+                and pin.get("parent") == "shaderc"
+            ):
+                del dependencies[child]
         directory, commit, _ = fetch_commit(
             "shaderc", dependencies["shaderc"], cache, dependencies["shaderc"]["commit"]
         )
         contents = run_retry(["git", "-C", str(directory), "show", f"{commit}:DEPS"])
-        for name, variable, repository in [
-            (
-                "glslang",
-                "glslang_revision",
-                "https://github.com/KhronosGroup/glslang.git",
-            ),
-            (
-                "spirv-headers",
-                "spirv_headers_revision",
-                "https://github.com/KhronosGroup/SPIRV-Headers.git",
-            ),
-            (
-                "spirv-tools",
-                "spirv_tools_revision",
-                "https://github.com/KhronosGroup/SPIRV-Tools.git",
-            ),
-        ]:
+        for name, variable, repository in BUILD_CONFIG.update.shaderc_deps:
             match = re.search(
                 rf"['\"]{variable}['\"]\s*:\s*['\"]([0-9a-f]{{40}})['\"]", contents
             )
@@ -208,7 +209,7 @@ def update_lock(lock_raw: dict, cache: Path, initial: bool = False) -> dict:
     roots = [
         (name, specification)
         for name, specification in candidate["dependencies"].items()
-        if "pinFrom" not in specification
+        if "pinFrom" not in specification and "repository" in specification
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(resolve_one, item, cache, initial) for item in roots]

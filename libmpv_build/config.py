@@ -13,181 +13,106 @@ from urllib.parse import urlsplit
 from . import ROOT
 
 TARGETS = ("android-arm64-v8a", "android-x86_64", "windows-x64", "linux-x64")
-
-STATIC_PACKAGES = (
-    "libavcodec",
-    "libavfilter",
-    "libavformat",
-    "libavutil",
-    "libswresample",
-    "libswscale",
-    "libass",
-    "libplacebo",
-    "freetype2",
-    "harfbuzz",
-    "fribidi",
-    "libunibreak",
-    "fontconfig",
-    "libxml-2.0",
-    "zlib",
-    "dav1d",
-    "shaderc",
-    "shaderc_combined",
-    "spirv-cross-c-shared",
-    "spirv-cross-c",
-)
-
-FFMPEG_FILTERS = (
-    "buffer",
-    "buffersink",
-    "abuffer",
-    "abuffersink",
-    "format",
-    "aformat",
-    "null",
-    "anull",
-    "copy",
-    "acopy",
-    "aresample",
-    "scale",
-    "crop",
-    "pad",
-    "transpose",
-    "hflip",
-    "vflip",
-    "rotate",
-    "fps",
-    "setpts",
-    "yadif",
-    "bwdif",
-    "eq",
-    "deband",
-    "volume",
-    "atempo",
-    "pan",
-    "channelmap",
-    "channelsplit",
-    "amerge",
-    "amix",
-    "loudnorm",
-    "dynaudnorm",
-)
-
-REQUIRED_MPV_EXPORTS = frozenset(
-    {
-        "mpv_client_api_version",
-        "mpv_create",
-        "mpv_initialize",
-        "mpv_destroy",
-        "mpv_terminate_destroy",
-        "mpv_command",
-        "mpv_command_async",
-        "mpv_command_string",
-        "mpv_set_option",
-        "mpv_set_option_string",
-        "mpv_set_property",
-        "mpv_set_property_string",
-        "mpv_get_property",
-        "mpv_get_property_string",
-        "mpv_observe_property",
-        "mpv_unobserve_property",
-        "mpv_wait_event",
-        "mpv_wakeup",
-        "mpv_render_context_create",
-        "mpv_render_context_render",
-        "mpv_render_context_update",
-        "mpv_render_context_free",
-        "mpv_stream_cb_add_ro",
-        "mpv_free",
-        "mpv_free_node_contents",
-    }
-)
-
-LINUX_SYSTEM_LIBRARIES = frozenset(
-    {
-        "libc.so.6",
-        "libm.so.6",
-        "libdl.so.2",
-        "libpthread.so.0",
-        "librt.so.1",
-        "ld-linux-x86-64.so.2",
-        "libGL.so.1",
-        "libEGL.so.1",
-        "libGLESv2.so.2",
-        "libOpenGL.so.0",
-        "libGLX.so.0",
-        "libX11.so.6",
-        "libXext.so.6",
-        "libXrandr.so.2",
-        "libXpresent.so.1",
-        "libXss.so.1",
-        "libXfixes.so.3",
-        "libXinerama.so.1",
-        "libXcursor.so.1",
-        "libxcb.so.1",
-        "libdrm.so.2",
-        "libva.so.2",
-        "libva-drm.so.2",
-        "libva-x11.so.2",
-        "libvdpau.so.1",
-        "libpulse.so.0",
-        "libasound.so.2",
-    }
-)
-
-MAX_GLIBC_VERSION = (2, 35)
-
-ANDROID_SYSTEM_LIBRARIES = frozenset(
-    {
-        "libc.so",
-        "libm.so",
-        "libdl.so",
-        "liblog.so",
-        "libandroid.so",
-        "libmediandk.so",
-        "libEGL.so",
-        "libGLESv2.so",
-        "libGLESv3.so",
-        "libjnigraphics.so",
-    }
-)
-
-WINDOWS_SYSTEM_DLLS = frozenset(
-    {
-        "kernel32.dll",
-        "user32.dll",
-        "gdi32.dll",
-        "advapi32.dll",
-        "shell32.dll",
-        "ole32.dll",
-        "oleaut32.dll",
-        "ws2_32.dll",
-        "winmm.dll",
-        "bcrypt.dll",
-        "d3d11.dll",
-        "dxgi.dll",
-        "opengl32.dll",
-        "dwrite.dll",
-        "avrt.dll",
-        "dwmapi.dll",
-        "imm32.dll",
-        "ntdll.dll",
-        "shcore.dll",
-        "uxtheme.dll",
-        "shlwapi.dll",
-        "version.dll",
-        "ucrtbase.dll",
-    }
-)
-
-WINDOWS_SYSTEM_DLL_PREFIXES = (
-    "api-ms-win-crt-",
-    "api-ms-win-core-",
-)
+OPT_LEVELS = frozenset({"O0", "O1", "O2", "O3", "Os", "Oz"})
+LTO_MODES = frozenset({"full", "thin"})
+TIERED_RECIPES = frozenset({
+    "zlib-ng", "dav1d", "ffmpeg", "libass", "libplacebo", "mpv", "freetype",
+    "fribidi", "harfbuzz", "libunibreak", "libxml2", "fontconfig", "shaderc",
+    "spirv-cross", "uchardet", "win-iconv", "libiconv", "wayland", "wayland-protocols",
+})
+SECTIONED_RECIPES = {
+    "fontconfig": {"common", "linux", "android"},
+    "libplacebo": {"common", "windows"},
+}
 
 RELEASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}")
 COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+# The configurable gate may require additional APIs, but it must always cover
+# the runtime contract used by native adapters
+MINIMUM_MPV_EXPORTS = frozenset({
+    "mpv_client_api_version", "mpv_command", "mpv_command_async", "mpv_command_ret",
+    "mpv_command_string", "mpv_create", "mpv_destroy", "mpv_free",
+    "mpv_free_node_contents", "mpv_get_property", "mpv_get_property_string",
+    "mpv_initialize", "mpv_observe_property", "mpv_render_context_create",
+    "mpv_render_context_free", "mpv_render_context_render",
+    "mpv_render_context_set_update_callback", "mpv_render_context_update",
+    "mpv_set_option", "mpv_set_option_string", "mpv_set_property",
+    "mpv_set_property_string", "mpv_stream_cb_add_ro", "mpv_terminate_destroy",
+    "mpv_unobserve_property", "mpv_wait_event", "mpv_wakeup",
+})
+
+
+@dataclass(frozen=True)
+class SystemFlags:
+    cflags: tuple[str, ...]
+    cxxflags: tuple[str, ...]
+    ldflags: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ToolchainFlagsConfig:
+    lto: str
+    default_opt: str
+    march: dict[str, str]
+    common_cflags: tuple[str, ...]
+    common_ldflags: tuple[str, ...]
+    systems: dict[str, SystemFlags]
+
+
+@dataclass(frozen=True)
+class PatchReplacement:
+    file: str
+    old: str
+    new: str
+
+
+@dataclass(frozen=True)
+class PatchesConfig:
+    freetype_disabled_modules: tuple[str, ...]
+    mpv_wayland_compat: tuple[PatchReplacement, ...]
+
+
+@dataclass(frozen=True)
+class FfmpegConfig:
+    decoders_common: tuple[str, ...]
+    decoders_android: tuple[str, ...]
+    decoders_desktop: tuple[str, ...]
+    demuxers: tuple[str, ...]
+    parsers: tuple[str, ...]
+    bsfs: tuple[str, ...]
+    protocols: tuple[str, ...]
+    filters: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class VerifyPolicyConfig:
+    max_glibc_version: tuple[int, int]
+    required_mpv_exports: frozenset[str]
+    linux_system_libraries: frozenset[str]
+    android_system_libraries: frozenset[str]
+    windows_system_dlls: frozenset[str]
+    windows_system_dll_prefixes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UpdatePinsConfig:
+    required_gitlinks: dict[str, frozenset[str]]
+    shaderc_deps: tuple[tuple[str, str, str], ...]
+
+
+@dataclass(frozen=True)
+class BuildConfig:
+    toolchain: ToolchainFlagsConfig
+    optimization_tiers: dict[str, str]
+    static_packages: tuple[str, ...]
+    recipes: dict[str, tuple[str, ...] | dict[str, tuple[str, ...]]]
+    patches: PatchesConfig
+    ffmpeg: FfmpegConfig
+    verify: VerifyPolicyConfig
+    update: UpdatePinsConfig
+    raw: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -220,16 +145,18 @@ class TargetProfile:
 @dataclass(frozen=True)
 class DependencySpec:
     name: str
-    repository: str
+    repository: str | None
     targets: tuple[str, ...]
     tag: str | None
     version: str
-    commit: str
+    commit: str | None
     date: str
     sha256: str
     tag_pattern: str | None
     pin_from: dict[str, Any] | None
     raw: dict[str, Any]
+    url: str | None = None
+    strip_prefix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -299,6 +226,8 @@ def _validate_pins(dependencies: dict[str, DependencySpec]) -> None:
         parent = pin.get("parent")
         if not isinstance(parent, str) or parent not in dependencies or parent == name:
             raise ValueError(f"Invalid pinned dependency parent: {name}")
+        if dependencies[parent].commit is None:
+            raise ValueError(f"Pinned dependency parent must be Git-locked: {name}")
         if not set(spec.targets).issubset(dependencies[parent].targets):
             raise ValueError(f"Pinned dependency targets exceed parent targets: {name}")
         if pin.get("type") == "gitlink":
@@ -348,9 +277,9 @@ def load_lock(path: Path | None = None) -> LockFile:
     release = raw.get("release", "")
     if not isinstance(release, str) or not RELEASE_RE.fullmatch(release):
         raise ValueError("Release must be a safe immutable asset name")
-    repository = raw.get("repository")
-    if not isinstance(repository, str) or not re.fullmatch(
-        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository
+    lock_repository = raw.get("repository")
+    if not isinstance(lock_repository, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", lock_repository
     ):
         raise ValueError("Repository must be an owner/name identifier")
     toolchains_raw = _object(raw.get("toolchains"), "Toolchains")
@@ -400,15 +329,14 @@ def load_lock(path: Path | None = None) -> LockFile:
         if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_-]+", name):
             raise ValueError(f"Invalid dependency name: {name}")
         record = _object(value, f"Dependency {name}")
-        validate_https_url(record.get("repository", ""), f"Dependency {name}")
-        commit = record.get("commit", "")
+        has_repo = "repository" in record
+        has_url = "url" in record
+        if has_repo == has_url:
+            raise ValueError(
+                f"Dependency {name} must specify exactly one of repository or url"
+            )
         digest = record.get("sha256", "")
-        if (
-            not isinstance(commit, str)
-            or not COMMIT_RE.fullmatch(commit)
-            or not isinstance(digest, str)
-            or not SHA256_RE.fullmatch(digest)
-        ):
+        if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
             raise ValueError(f"Dependency is not fully locked: {name}")
         target_list = record.get("targets")
         if (
@@ -427,34 +355,73 @@ def load_lock(path: Path | None = None) -> LockFile:
             raise ValueError(f"Dependency {name} date must be ISO-8601") from None
         if parsed_date.tzinfo is None:
             raise ValueError(f"Dependency {name} date must include a timezone")
-        pin = (
-            _object(record["pinFrom"], f"Dependency {name} pin")
-            if "pinFrom" in record
-            else None
-        )
+
+        dependency_repository: str | None = None
+        commit: str | None = None
+        url: str | None = None
+        strip_prefix: str | None = None
+        pin: dict[str, Any] | None = None
         tag = record.get("tag")
-        if pin is None:
-            _text(tag, f"Dependency {name} tag")
-            pattern = _text(record.get("tagPattern"), f"Dependency {name} tag pattern")
-            try:
-                compiled = re.compile(pattern)
-            except re.error:
-                raise ValueError(f"Invalid dependency tag pattern: {name}") from None
-            if compiled.groups < 1:
-                raise ValueError(
-                    f"Dependency tag pattern must capture a version: {name}"
+
+        if has_url:
+            if name == "mpv":
+                raise ValueError("The mpv dependency must be Git-locked")
+            for forbidden in ("commit", "pinFrom", "tag", "tagPattern"):
+                if forbidden in record:
+                    raise ValueError(
+                        f"Tarball dependency {name} must not define {forbidden}"
+                    )
+            url = record.get("url", "")
+            validate_https_url(url, f"Dependency {name}")
+            if "stripPrefix" not in record:
+                raise ValueError(f"Tarball dependency {name} must define stripPrefix")
+            strip_prefix = _text(
+                record.get("stripPrefix"), f"Dependency {name} stripPrefix"
+            )
+            if (
+                "/" in strip_prefix
+                or "\\" in strip_prefix
+                or strip_prefix in (".", "..")
+            ):
+                raise ValueError(f"Unsafe stripPrefix for {name}: {strip_prefix}")
+        else:
+            dependency_repository = record.get("repository", "")
+            validate_https_url(dependency_repository, f"Dependency {name}")
+            commit = record.get("commit", "")
+            if not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit):
+                raise ValueError(f"Dependency is not fully locked: {name}")
+            pin = (
+                _object(record["pinFrom"], f"Dependency {name} pin")
+                if "pinFrom" in record
+                else None
+            )
+            if pin is None:
+                _text(tag, f"Dependency {name} tag")
+                pattern = _text(
+                    record.get("tagPattern"), f"Dependency {name} tag pattern"
                 )
-        elif tag is not None:
-            _text(tag, f"Dependency {name} tag")
-        if "tagPattern" in record and not isinstance(record["tagPattern"], str):
-            raise ValueError(f"Invalid dependency tag pattern: {name}")
+                try:
+                    compiled = re.compile(pattern)
+                except re.error:
+                    raise ValueError(
+                        f"Invalid dependency tag pattern: {name}"
+                    ) from None
+                if compiled.groups < 1:
+                    raise ValueError(
+                        f"Dependency tag pattern must capture a version: {name}"
+                    )
+            elif tag is not None:
+                _text(tag, f"Dependency {name} tag")
+            if "tagPattern" in record and not isinstance(record["tagPattern"], str):
+                raise ValueError(f"Invalid dependency tag pattern: {name}")
+
         if not targets:
             raise ValueError(f"Dependency {name} has invalid targets: {targets}")
         dependencies[name] = DependencySpec(
             name=name,
-            repository=record["repository"],
+            repository=dependency_repository,
             targets=targets,
-            tag=record.get("tag"),
+            tag=tag,
             version=version,
             commit=commit,
             date=date,
@@ -462,11 +429,13 @@ def load_lock(path: Path | None = None) -> LockFile:
             tag_pattern=record.get("tagPattern"),
             pin_from=dict(pin) if pin is not None else None,
             raw=dict(record),
+            url=url,
+            strip_prefix=strip_prefix,
         )
     _validate_pins(dependencies)
     return LockFile(
         release=release,
-        repository=repository,
+        repository=lock_repository,
         toolchains=toolchains,
         dependencies=dependencies,
         build_tools=dict(build_tools),
@@ -506,9 +475,9 @@ def load_profiles(path: Path | None = None) -> dict[str, TargetProfile]:
             )
         api = item.get("api")
         if target.startswith("android-"):
-            if type(api) is not int or not 21 <= api <= 100:
+            if type(api) is not int or api != 28:
                 raise ValueError(
-                    f"Profile {target} requires a valid 64-bit Android API level"
+                    f"Profile {target} must retain the Android API 28 baseline"
                 )
         elif "api" in item:
             raise ValueError(f"Profile {target} must not declare an Android API level")
@@ -538,3 +507,253 @@ def load_profiles(path: Path | None = None) -> dict[str, TargetProfile]:
             api=item.get("api"),
         )
     return profiles
+
+
+def _text_tuple(value: Any, context: str, *, allow_empty: bool = False) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{context} must be a list")  # noqa: TRY004 - Invalid JSON values use ValueError
+    if not allow_empty and not value:
+        raise ValueError(f"{context} must not be empty")
+    return tuple(_text(item, f"{context} item") for item in value)
+
+
+def load_build_config(path: Path | None = None) -> BuildConfig:
+    config_path = path or (ROOT / "build-config.json")
+    raw = _object(
+        json.loads(config_path.read_text(encoding="utf-8")), "Build configuration"
+    )
+
+    tc_raw = _object(raw.get("toolchain"), "Build toolchain configuration")
+    lto = _text(tc_raw.get("lto"), "Toolchain lto")
+    if lto not in LTO_MODES:
+        raise ValueError(f"Unsupported LTO mode: {lto}")
+    default_opt = _text(tc_raw.get("defaultOpt"), "Toolchain defaultOpt")
+    if default_opt not in OPT_LEVELS:
+        raise ValueError(f"Unsupported default optimization level: {default_opt}")
+    march_raw = _object(tc_raw.get("march"), "Toolchain march")
+    for arch in ("aarch64", "x86_64"):
+        if arch not in march_raw:
+            raise ValueError(f"Toolchain march is missing CPU architecture: {arch}")
+    march = {
+        _text(k, "Toolchain march key"): _text(v, f"Toolchain march[{k}]")
+        for k, v in march_raw.items()
+    }
+    common_cflags = _text_tuple(
+        tc_raw.get("commonCflags"), "Toolchain commonCflags", allow_empty=True
+    )
+    common_ldflags = _text_tuple(
+        tc_raw.get("commonLdflags"), "Toolchain commonLdflags", allow_empty=True
+    )
+    systems_raw = _object(tc_raw.get("systems"), "Toolchain systems")
+    if set(systems_raw) != {"linux", "android", "windows"}:
+        raise ValueError("Toolchain systems must define linux, android, and windows")
+    systems: dict[str, SystemFlags] = {}
+    for sys_name, sys_val in systems_raw.items():
+        sys_obj = _object(sys_val, f"Toolchain systems.{sys_name}")
+        systems[sys_name] = SystemFlags(
+            cflags=_text_tuple(
+                sys_obj.get("cflags"), f"Toolchain {sys_name} cflags", allow_empty=True
+            ),
+            cxxflags=_text_tuple(
+                sys_obj.get("cxxflags"),
+                f"Toolchain {sys_name} cxxflags",
+                allow_empty=True,
+            ),
+            ldflags=_text_tuple(
+                sys_obj.get("ldflags"), f"Toolchain {sys_name} ldflags", allow_empty=True
+            ),
+        )
+    toolchain_cfg = ToolchainFlagsConfig(
+        lto=lto,
+        default_opt=default_opt,
+        march=march,
+        common_cflags=common_cflags,
+        common_ldflags=common_ldflags,
+        systems=systems,
+    )
+
+    tiers_raw = _object(raw.get("optimizationTiers"), "Optimization tiers")
+    if not TIERED_RECIPES.issubset(tiers_raw):
+        raise ValueError(
+            f"Missing optimization tiers: {sorted(TIERED_RECIPES - tiers_raw.keys())}"
+        )
+    optimization_tiers: dict[str, str] = {}
+    for dep_name, level in tiers_raw.items():
+        name_text = _text(dep_name, "Optimization tier dependency")
+        level_text = _text(level, f"Optimization tier for {name_text}")
+        if level_text not in OPT_LEVELS:
+            raise ValueError(
+                f"Unsupported optimization level for {name_text}: {level_text}"
+            )
+        optimization_tiers[name_text] = level_text
+
+    static_packages = _text_tuple(raw.get("staticPackages"), "Static packages")
+
+    recipes_raw = _object(raw.get("recipes"), "Recipes configuration")
+    required_recipes = TIERED_RECIPES - {"ffmpeg", "libunibreak"}
+    if not required_recipes.issubset(recipes_raw):
+        raise ValueError(f"Missing recipes: {sorted(required_recipes - recipes_raw.keys())}")
+    recipes: dict[str, tuple[str, ...] | dict[str, tuple[str, ...]]] = {}
+    for rec_name, rec_val in recipes_raw.items():
+        rec_key = _text(rec_name, "Recipe configuration key")
+        if rec_key in SECTIONED_RECIPES:
+            sections = _object(rec_val, f"Recipe {rec_key}")
+            if not SECTIONED_RECIPES[rec_key].issubset(sections):
+                raise ValueError(f"Recipe {rec_key} is missing required sections")
+        elif rec_key in required_recipes and not isinstance(rec_val, list):
+            raise ValueError(f"Recipe {rec_key} options must be a list")
+        if isinstance(rec_val, list):
+            recipes[rec_key] = _text_tuple(
+                rec_val, f"Recipe {rec_key} options", allow_empty=True
+            )
+        elif isinstance(rec_val, dict):
+            recipes[rec_key] = {
+                _text(sub_k, f"Recipe {rec_key} section"): _text_tuple(
+                    sub_v, f"Recipe {rec_key}.{sub_k}", allow_empty=True
+                )
+                for sub_k, sub_v in rec_val.items()
+            }
+        else:
+            raise ValueError(f"Recipe {rec_key} must be a list or object")  # noqa: TRY004 - Invalid JSON values use ValueError
+
+    patches_raw = _object(raw.get("patches"), "Patches configuration")
+    ft_disabled = _text_tuple(
+        patches_raw.get("freetypeDisabledModules"), "patches.freetypeDisabledModules"
+    )
+    wl_compat_raw = patches_raw.get("mpvWaylandCompat")
+    if not isinstance(wl_compat_raw, list):
+        raise ValueError("patches.mpvWaylandCompat must be a list")  # noqa: TRY004 - Invalid JSON values use ValueError
+    wl_compat: list[PatchReplacement] = []
+    for item in wl_compat_raw:
+        entry = _object(item, "mpvWaylandCompat entry")
+        rel_file = _text(entry.get("file"), "mpvWaylandCompat.file")
+        rel_path = PurePosixPath(rel_file)
+        if (
+            rel_path.is_absolute()
+            or not rel_path.parts
+            or ".." in rel_path.parts
+            or "\\" in rel_file
+            or ":" in rel_file
+        ):
+            raise ValueError(f"Unsafe patch file path: {rel_file}")
+        wl_compat.append(
+            PatchReplacement(
+                file=rel_path.as_posix(),
+                old=_text(entry.get("old"), "mpvWaylandCompat.old"),
+                new=_text(entry.get("new"), "mpvWaylandCompat.new"),
+            )
+        )
+    patches_cfg = PatchesConfig(
+        freetype_disabled_modules=ft_disabled,
+        mpv_wayland_compat=tuple(wl_compat),
+    )
+
+    ff_raw = _object(raw.get("ffmpeg"), "FFmpeg configuration")
+    ff_dec = _object(ff_raw.get("decoders"), "FFmpeg decoders")
+    ffmpeg_cfg = FfmpegConfig(
+        decoders_common=_text_tuple(ff_dec.get("common"), "ffmpeg.decoders.common"),
+        decoders_android=_text_tuple(ff_dec.get("android"), "ffmpeg.decoders.android"),
+        decoders_desktop=_text_tuple(ff_dec.get("desktop"), "ffmpeg.decoders.desktop"),
+        demuxers=_text_tuple(ff_raw.get("demuxers"), "ffmpeg.demuxers"),
+        parsers=_text_tuple(ff_raw.get("parsers"), "ffmpeg.parsers"),
+        bsfs=_text_tuple(ff_raw.get("bsfs"), "ffmpeg.bsfs"),
+        protocols=_text_tuple(ff_raw.get("protocols"), "ffmpeg.protocols"),
+        filters=_text_tuple(ff_raw.get("filters"), "ffmpeg.filters"),
+    )
+
+    ver_raw = _object(raw.get("verify"), "Verify configuration")
+    glibc_raw = ver_raw.get("maxGlibcVersion")
+    if (
+        not isinstance(glibc_raw, list)
+        or len(glibc_raw) != 2
+        or any(type(part) is not int or part < 0 for part in glibc_raw)
+    ):
+        raise ValueError("verify.maxGlibcVersion must be a 2-integer version list")
+    if tuple(glibc_raw) > (2, 35):
+        raise ValueError("verify.maxGlibcVersion must not exceed the glibc 2.35 baseline")
+    required_exports = frozenset(
+        _text_tuple(ver_raw.get("requiredMpvExports"), "verify.requiredMpvExports")
+    )
+    if not MINIMUM_MPV_EXPORTS.issubset(required_exports):
+        raise ValueError(
+            "verify.requiredMpvExports is missing required runtime APIs: "
+            f"{sorted(MINIMUM_MPV_EXPORTS - required_exports)}"
+        )
+    if any(not re.fullmatch(r"mpv_[A-Za-z0-9_]+", name) for name in required_exports):
+        raise ValueError("verify.requiredMpvExports must contain mpv_* API names")
+    verify_cfg = VerifyPolicyConfig(
+        max_glibc_version=(glibc_raw[0], glibc_raw[1]),
+        required_mpv_exports=required_exports,
+        linux_system_libraries=frozenset(
+            _text_tuple(
+                ver_raw.get("linuxSystemLibraries"), "verify.linuxSystemLibraries"
+            )
+        ),
+        android_system_libraries=frozenset(
+            _text_tuple(
+                ver_raw.get("androidSystemLibraries"), "verify.androidSystemLibraries"
+            )
+        ),
+        windows_system_dlls=frozenset(
+            _text_tuple(ver_raw.get("windowsSystemDlls"), "verify.windowsSystemDlls")
+        ),
+        windows_system_dll_prefixes=_text_tuple(
+            ver_raw.get("windowsSystemDllPrefixes"), "verify.windowsSystemDllPrefixes"
+        ),
+    )
+
+    upd_raw = _object(raw.get("update"), "Update configuration")
+    gitlinks_raw = _object(upd_raw.get("requiredGitlinks"), "update.requiredGitlinks")
+    required_gitlinks = {
+        _text(parent, "update.requiredGitlinks parent"): frozenset(
+            _text_tuple(paths, f"update.requiredGitlinks.{parent}")
+        )
+        for parent, paths in gitlinks_raw.items()
+    }
+    shaderc_deps_raw = upd_raw.get("shadercDeps")
+    if not isinstance(shaderc_deps_raw, list) or not shaderc_deps_raw:
+        raise ValueError("update.shadercDeps must be a non-empty list")
+    shaderc_deps: list[tuple[str, str, str]] = []
+    for item in shaderc_deps_raw:
+        entry = _object(item, "update.shadercDeps entry")
+        dep_name = _text(entry.get("name"), "update.shadercDeps.name")
+        variable = _text(entry.get("variable"), "update.shadercDeps.variable")
+        repository = _text(entry.get("repository"), "update.shadercDeps.repository")
+        validate_https_url(repository, f"update.shadercDeps.{dep_name}")
+        shaderc_deps.append((dep_name, variable, repository))
+    update_cfg = UpdatePinsConfig(
+        required_gitlinks=required_gitlinks,
+        shaderc_deps=tuple(shaderc_deps),
+    )
+
+    return BuildConfig(
+        toolchain=toolchain_cfg,
+        optimization_tiers=optimization_tiers,
+        static_packages=static_packages,
+        recipes=recipes,
+        patches=patches_cfg,
+        ffmpeg=ffmpeg_cfg,
+        verify=verify_cfg,
+        update=update_cfg,
+        raw=raw,
+    )
+
+
+BUILD_CONFIG = load_build_config()
+
+OPTIMIZATION_TIERS = BUILD_CONFIG.optimization_tiers
+STATIC_PACKAGES = BUILD_CONFIG.static_packages
+FFMPEG_DECODERS = BUILD_CONFIG.ffmpeg.decoders_common
+FFMPEG_ANDROID_DECODERS = BUILD_CONFIG.ffmpeg.decoders_android
+FFMPEG_DESKTOP_DECODERS = BUILD_CONFIG.ffmpeg.decoders_desktop
+FFMPEG_DEMUXERS = BUILD_CONFIG.ffmpeg.demuxers
+FFMPEG_PARSERS = BUILD_CONFIG.ffmpeg.parsers
+FFMPEG_BSFS = BUILD_CONFIG.ffmpeg.bsfs
+FFMPEG_PROTOCOLS = BUILD_CONFIG.ffmpeg.protocols
+FFMPEG_FILTERS = BUILD_CONFIG.ffmpeg.filters
+REQUIRED_MPV_EXPORTS = BUILD_CONFIG.verify.required_mpv_exports
+LINUX_SYSTEM_LIBRARIES = BUILD_CONFIG.verify.linux_system_libraries
+MAX_GLIBC_VERSION = BUILD_CONFIG.verify.max_glibc_version
+ANDROID_SYSTEM_LIBRARIES = BUILD_CONFIG.verify.android_system_libraries
+WINDOWS_SYSTEM_DLLS = BUILD_CONFIG.verify.windows_system_dlls
+WINDOWS_SYSTEM_DLL_PREFIXES = BUILD_CONFIG.verify.windows_system_dll_prefixes

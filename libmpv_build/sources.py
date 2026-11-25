@@ -11,7 +11,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 from .config import COMMIT_RE, SHA256_RE, validate_https_url
 from .fs import (
@@ -181,16 +183,77 @@ def resolve_dependency(
     }
 
 
+def _tarball_suffix(url: str) -> str:
+    path = urlsplit(url).path.lower()
+    for suffix in (".tar.xz", ".tar.bz2", ".tar.gz", ".tgz"):
+        if path.endswith(suffix):
+            return suffix
+    return ".tar.gz"
+
+
+def _source_identity(name: str, specification: dict) -> tuple[str, str]:
+    expected = specification["sha256"]
+    if not SHA256_RE.fullmatch(expected):
+        raise ValueError(f"Dependency is not fully locked: {name}")
+    if "url" in specification:
+        # Keep the complete digest in cache identities.  A truncated prefix
+        # can alias two locked tarballs and make concurrent source restores
+        # overwrite one another before the marker catches the mismatch.
+        return expected, expected
+    commit = specification["commit"]
+    if not COMMIT_RE.fullmatch(commit):
+        raise ValueError(f"Dependency is not fully locked: {name}")
+    return commit, expected
+
+
 def verified_source_archive(lock_raw: dict, name: str, cache_root: Path) -> Path:
-    """Return a SHA-256 verified source archive from cache or Git mirror."""
+    """Return a SHA-256 verified source archive from cache, HTTPS tarball, or Git mirror."""
     specification = lock_raw["dependencies"][name]
+    if not re.fullmatch(r"[a-z0-9_-]+", name):
+        raise ValueError(f"Invalid dependency name: {name}")
+    if "url" in specification:
+        url = specification["url"]
+        expected = specification["sha256"]
+        validate_https_url(url, f"Dependency {name}")
+        if not SHA256_RE.fullmatch(expected):
+            raise ValueError(f"Dependency is not fully locked: {name}")
+        archive = (
+            cache_root
+            / "archives"
+            / f"{name}-{expected}{_tarball_suffix(url)}"
+        )
+        if (
+            archive.is_file()
+            and not archive.is_symlink()
+            and sha256_file(archive) == expected
+        ):
+            return archive
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        with cache_lock(cache_root, "tarball", f"{name}:{expected}"):
+            if (
+                archive.is_file()
+                and not archive.is_symlink()
+                and sha256_file(archive) == expected
+            ):
+                return archive
+            with tempfile.NamedTemporaryFile(
+                dir=archive.parent, prefix=f".{name}-", delete=False
+            ) as target:
+                temporary = Path(target.name)
+                try:
+                    with urllib.request.urlopen(url, timeout=120) as response:
+                        shutil.copyfileobj(response, target)
+                    target.flush()
+                    if sha256_file(temporary) != expected:
+                        raise ValueError(f"Source SHA-256 mismatch: {name}")
+                    temporary.replace(archive)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        return archive
+
     commit = specification["commit"]
     expected = specification["sha256"]
-    if (
-        not re.fullmatch(r"[a-z0-9_-]+", name)
-        or not COMMIT_RE.fullmatch(commit)
-        or not SHA256_RE.fullmatch(expected)
-    ):
+    if not COMMIT_RE.fullmatch(commit) or not SHA256_RE.fullmatch(expected):
         raise ValueError(f"Dependency is not fully locked: {name}")
     archive = cache_root / "archives" / f"{name}-{commit}.tar.gz"
     if (
@@ -242,8 +305,9 @@ def locked_source_hashes(
 ) -> dict[str, dict]:
     if name in ancestors:
         raise ValueError(f"Cyclic source submodule inputs: {name}")
+    strip_prefix = lock_raw["dependencies"][name].get("stripPrefix") or name
     result = archive_hash_tree(
-        verified_source_archive(lock_raw, name, cache_root), strip_prefix=name
+        verified_source_archive(lock_raw, name, cache_root), strip_prefix=strip_prefix
     )
     for child, path in source_children(lock_raw, name):
         child_tree = locked_source_hashes(
@@ -278,10 +342,9 @@ def _locked_source_tree(
     inputs = locked_source_inputs(lock_raw, name)
     with contextlib.ExitStack() as locks:
         for dependency, specification in sorted(inputs.items()):
+            ident = specification.get("commit") or specification["sha256"]
             locks.enter_context(
-                cache_lock(
-                    cache_root, "source", f"{dependency}:{specification['commit']}"
-                )
+                cache_lock(cache_root, "source", f"{dependency}:{ident}")
             )
         yield _restore_source_tree(
             lock_raw, name, cache_root, verify_cache=verify_cache
@@ -317,11 +380,9 @@ def _restore_source_tree(
     lock_raw: dict, name: str, cache_root: Path, *, verify_cache: bool
 ) -> Path:
     specification = lock_raw["dependencies"][name]
-    commit = specification["commit"]
-    expected = specification["sha256"]
-    if not COMMIT_RE.fullmatch(commit) or not SHA256_RE.fullmatch(expected):
-        raise ValueError(f"Dependency is not fully locked: {name}")
-    directory = cache_root / "sources" / f"{name}-{commit}"
+    ident, _ = _source_identity(name, specification)
+    strip_prefix = specification.get("stripPrefix") or name
+    directory = cache_root / "sources" / f"{name}-{ident}"
     marker = directory / SOURCE_MARKER
     inputs = locked_source_inputs(lock_raw, name)
     if marker.is_file() and not marker.is_symlink():
@@ -352,7 +413,7 @@ def _restore_source_tree(
     directory.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{name}-", dir=directory.parent))
     try:
-        extract_archive_safe(archive, staging, strip_prefix=name)
+        extract_archive_safe(archive, staging, strip_prefix=strip_prefix)
         for child, relative in source_children(lock_raw, name):
             target = staging.joinpath(*PurePosixPath(relative).parts)
             root_mode = (

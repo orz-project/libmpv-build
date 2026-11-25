@@ -27,6 +27,7 @@ def _build_synthetic_elf64(
     exports: tuple[str, ...] = (),
     glibc_versions: tuple[str, ...] = (),
     hash_style: str = "gnu",
+    extra_dynamic_tags: tuple[tuple[int, int], ...] = (),
 ) -> None:
     dynstr_parts = [b"\x00"]
     offsets: dict[str, int] = {}
@@ -41,7 +42,9 @@ def _build_synthetic_elf64(
         intern(item)
     dynstr = b"".join(dynstr_parts)
 
-    dynamic_size = (len(needed) + 6 + (2 if glibc_versions else 0)) * 16
+    dynamic_size = (
+        len(needed) + 6 + (2 if glibc_versions else 0) + len(extra_dynamic_tags)
+    ) * 16
     dynsym_entries = struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0) + b"".join(
         struct.pack("<IBBHQQ", intern(sym), (1 << 4) | 2, 0, 1, 0, 0) for sym in exports
     )
@@ -113,6 +116,7 @@ def _build_synthetic_elf64(
     )
     if glibc_versions:
         dynamic_tags.extend(((0x6FFFFFFE, verneed_off), (0x6FFFFFFF, 1)))
+    dynamic_tags.extend(extra_dynamic_tags)
     dyn_entries = b"".join(
         struct.pack("<qQ", tag, value) for tag, value in (*dynamic_tags, (0, 0))
     )
@@ -304,6 +308,84 @@ def _build_synthetic_pe64(
 
 
 class VerifyBinaryTests(unittest.TestCase):
+    def test_host_required_command_results_and_render_callbacks_cannot_be_missing(
+        self,
+    ) -> None:
+        host_required = {"mpv_command_ret", "mpv_render_context_set_update_callback"}
+        self.assertLessEqual(host_required, REQUIRED_MPV_EXPORTS)
+        for target, machine in (
+            ("linux-x64", 62),
+            ("android-arm64-v8a", 183),
+            ("android-x86_64", 62),
+            ("windows-x64", None),
+        ):
+            for missing in sorted(host_required):
+                with (
+                    self.subTest(target=target, missing=missing),
+                    tempfile.TemporaryDirectory() as td,
+                ):
+                    library = Path(td) / "runtime"
+                    exports = REQUIRED_MPV_EXPORTS - {missing}
+                    if target.startswith("android-"):
+                        exports |= {"av_jni_set_java_vm"}
+                    if machine is None:
+                        _build_synthetic_pe64(
+                            library, exports=tuple(sorted(exports)), imports=()
+                        )
+                    else:
+                        _build_synthetic_elf64(
+                            library, machine=machine, exports=tuple(sorted(exports))
+                        )
+                    with self.assertRaisesRegex(
+                        VerificationError,
+                        f"Missing required mpv C API exports:.*{missing}",
+                    ):
+                        verify_library_file(target, library)
+
+    def test_standard_relr_tags_are_rejected_on_legacy_platform_baselines(self) -> None:
+        for target, machine in (
+            ("linux-x64", 62),
+            ("android-arm64-v8a", 183),
+            ("android-x86_64", 62),
+        ):
+            for tag in (35, 36, 37):
+                with (
+                    self.subTest(target=target, tag=tag),
+                    tempfile.TemporaryDirectory() as td,
+                ):
+                    library = Path(td) / "runtime"
+                    exports = REQUIRED_MPV_EXPORTS
+                    if target.startswith("android-"):
+                        exports |= {"av_jni_set_java_vm"}
+                    _build_synthetic_elf64(
+                        library,
+                        machine=machine,
+                        exports=tuple(sorted(exports)),
+                        extra_dynamic_tags=((tag, 8),),
+                    )
+                    with self.assertRaisesRegex(
+                        VerificationError, "Standard DT_RELR requires"
+                    ):
+                        verify_library_file(target, library)
+
+    def test_android_28_keeps_support_for_android_relr_tags(self) -> None:
+        for target, machine in (("android-arm64-v8a", 183), ("android-x86_64", 62)):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as td:
+                library = Path(td) / "runtime"
+                _build_synthetic_elf64(
+                    library,
+                    machine=machine,
+                    exports=tuple(
+                        sorted(REQUIRED_MPV_EXPORTS | {"av_jni_set_java_vm"})
+                    ),
+                    extra_dynamic_tags=(
+                        (0x6FFFE000, 8),
+                        (0x6FFFE001, 8),
+                        (0x6FFFE003, 8),
+                    ),
+                )
+                self.assertEqual(verify_library_file(target, library)["target"], target)
+
     def test_android_elf_gates(self) -> None:
         exports = (*sorted(REQUIRED_MPV_EXPORTS), "av_jni_set_java_vm")
         with tempfile.TemporaryDirectory() as td:
@@ -347,7 +429,15 @@ class VerifyBinaryTests(unittest.TestCase):
             _build_synthetic_elf64(
                 so,
                 machine=62,
-                needed=("libc.so.6", "libGL.so.1"),
+                needed=(
+                    "libc.so.6",
+                    "libGL.so.1",
+                    "libwayland-client.so.0",
+                    "libwayland-cursor.so.0",
+                    "libwayland-egl.so.1",
+                    "libxkbcommon.so.0",
+                    "libva-wayland.so.2",
+                ),
                 exports=exports,
                 glibc_versions=("GLIBC_2.17", "GLIBC_2.35"),
             )

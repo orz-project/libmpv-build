@@ -7,11 +7,19 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
 from . import ROOT
-from .config import STATIC_PACKAGES, TARGETS, LockFile, TargetProfile, load_profiles
+from .config import (
+    BUILD_CONFIG,
+    STATIC_PACKAGES,
+    TARGETS,
+    LockFile,
+    TargetProfile,
+    load_profiles,
+)
 from .fs import (
     atomic_replace_dir,
     atomic_write_text,
@@ -23,6 +31,7 @@ from .locks import target_lock
 from .package import (
     _build_inputs_snapshot,
     _delivery_inputs_snapshot,
+    _validate_loaded_build_config,
     clean_dist,
     package_target,
 )
@@ -191,6 +200,7 @@ class TargetBuilder:
         self.cache_root = root / ".cache"
 
     def build(self) -> dict:
+        _validate_loaded_build_config(self.root)
         input_snapshot = _build_inputs_snapshot(self.root)
         expected_meson = self.lock.build_tools.get("meson", {}).get("version")
         if expected_meson and capture_cmd(["meson", "--version"]) != expected_meson:
@@ -291,7 +301,8 @@ class TargetBuilder:
                         {
                             "dependency": name,
                             "identity": dep_id,
-                            "commit": self.lock.dependencies[name].commit,
+                            "commit": self.lock.dependencies[name].commit
+                            or self.lock.dependencies[name].sha256,
                             "manifest": manifest,
                             "hashes": {
                                 path: sha256_file(stage_prefix / path)
@@ -318,13 +329,19 @@ class TargetBuilder:
                 "Build inputs changed during compilation; restart this target before packaging"
             )
 
+        opt_tiers: dict[str, list[str]] = {}
+        for dep_name, level in sorted(BUILD_CONFIG.optimization_tiers.items()):
+            opt_tiers.setdefault(level, []).append(dep_name)
         metadata = {
             "release": self.lock.release,
             "target": self.profile.name,
             "identity": dep_ids["mpv"],
             "compiler": tc.compiler_version,
             "profile": self.profile.to_dict(),
-            "optimization": {"ffmpeg": "O2", "other": "Os", "lto": "thin"},
+            "optimization": {
+                **opt_tiers,
+                "lto": BUILD_CONFIG.toolchain.lto,
+            },
             "depIdentities": dep_ids,
             "deliveryInputs": _delivery_inputs_snapshot(self.profile, self.prefix),
             "buildTools": {
@@ -348,6 +365,66 @@ class TargetBuilder:
         )
 
 
+def container_image_identity(lock: LockFile, root: Path = ROOT) -> tuple[str, str]:
+    linux = lock.toolchains["linux"].raw
+    identity = hashlib.sha256(
+        (root / "Dockerfile").read_bytes()
+        + (root / "dependencies.json").read_bytes()
+        + linux["image"].encode("utf-8")
+    ).hexdigest()
+    return identity, f"libmpv-build:{identity[:16]}"
+
+
+def build_container_image(lock: LockFile, *, root: Path = ROOT) -> str:
+    """Build and tag the container matching the current toolchain lock."""
+    require_executable("docker")
+    identity, image = container_image_identity(lock, root)
+    linux = lock.toolchains["linux"].raw
+    run_cmd(
+        [
+            "docker",
+            "build",
+            "--build-arg",
+            f"UBUNTU_IMAGE={linux['image']}",
+            "--label",
+            f"org.libmpv-build.identity={identity}",
+            "-t",
+            image,
+            ".",
+        ],
+        cwd=root,
+    )
+    return image
+
+
+def _require_matching_container_image(
+    lock: LockFile, *, root: Path = ROOT
+) -> str:
+    identity, image = container_image_identity(lock, root)
+    try:
+        actual = capture_cmd(
+            [
+                "docker",
+                "image",
+                "inspect",
+                "--format={{ index .Config.Labels \"org.libmpv-build.identity\" }}",
+                image,
+            ],
+            cwd=root,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"Matching container image {image} is not available; create it with "
+            "`python3 -m libmpv_build container-image` first"
+        ) from error
+    if actual != identity:
+        raise RuntimeError(
+            f"Container image {image} does not match the current lock; recreate it with "
+            "`python3 -m libmpv_build container-image`"
+        )
+    return image
+
+
 def run_in_container(
     lock: LockFile,
     targets: list[str],
@@ -358,25 +435,14 @@ def run_in_container(
     toolchain: str | None,
     verify_cache: bool,
     no_clean_dist: bool,
+    reuse_image: bool = False,
     root: Path = ROOT,
 ) -> None:
     require_executable("docker")
-    linux = lock.toolchains["linux"].raw
-    image_hash = hashlib.sha256(
-        (root / "Dockerfile").read_bytes() + linux["image"].encode("utf-8")
-    ).hexdigest()[:16]
-    image = f"libmpv-build:{image_hash}"
-    run_cmd(
-        [
-            "docker",
-            "build",
-            "--build-arg",
-            f"UBUNTU_IMAGE={linux['image']}",
-            "-t",
-            image,
-            ".",
-        ],
-        cwd=root,
+    image = (
+        _require_matching_container_image(lock, root=root)
+        if reuse_image
+        else build_container_image(lock, root=root)
     )
 
     import os
@@ -413,6 +479,7 @@ def build_targets(
     ndk: str | None = None,
     toolchain: str | None = None,
     container: bool = False,
+    reuse_container_image: bool = False,
     verify_cache: bool = False,
     clean_dist_flag: bool = True,
     root: Path = ROOT,
@@ -427,9 +494,12 @@ def build_targets(
             toolchain=toolchain,
             verify_cache=verify_cache,
             no_clean_dist=(not clean_dist_flag),
+            reuse_image=reuse_container_image,
             root=root,
         )
         return []
+    if reuse_container_image:
+        raise ValueError("--reuse-container-image requires --container")
 
     profiles = load_profiles(root / "targets.json")
     receipts: list[dict] = []

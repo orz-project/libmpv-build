@@ -7,7 +7,8 @@ This repository builds the libmpv runtime. The build system is the pure-stdlib `
 | Path | Owns |
 | --- | --- |
 | `libmpv_build/` | CLI, lock/config loading, sources, toolchains, recipes, DAG builder, verification, packaging, update, release notes |
-| `dependencies.json` | Single source of truth for release, toolchains, build tools, and every dependency's tag, version, full commit, upstream date and source SHA-256 |
+| `build-config.json` | Single source of truth for compiler/linker flags, optimization tiers, recipe options, FFmpeg whitelists, patch anchors, update pins, and verification allowlists |
+| `dependencies.json` | Single source of truth for release, toolchains, build tools, and every dependency's tag, version, full commit/tarball URL, upstream date and source SHA-256 |
 | `targets.json` | Per-target platform parameters and configure options |
 | `patches/` | Android and desktop export maps |
 | `include/mpv/` | Public headers matching the locked mpv version |
@@ -22,10 +23,11 @@ Keep the package stdlib-only; do not add third-party Python dependencies.
 - Targets are exactly `android-arm64-v8a`, `android-x86_64`, `windows-x64` and `linux-x64`
 - Android: API 28, 16 KiB `PT_LOAD` alignment, `av_jni_set_java_vm` exported
 - Linux: glibc requirement must stay at or below 2.35 (Ubuntu 22.04 container baseline)
-- Statically link all third-party libraries into the shared runtime; depend only on system graphics/audio interfaces. Windows `libass` uses native DirectWrite without `fontconfig`/`libxml2`
-- Build FFmpeg with `-O2` for software decoding throughput and other third-party libraries with `-Os`; both use ThinLTO. Strip unneeded symbols and do not emit debug symbol archives
-- Preserve stream callbacks, software decoding, ASS subtitles, HLS, `screenshot-raw` and the platform rendering/audio backends
+- Statically link all third-party libraries into the shared runtime; depend only on system graphics/audio interfaces. Windows `libass` uses native DirectWrite without `fontconfig`/`libxml2` (while `libxml2` is linked everywhere for FFmpeg MPEG-DASH)
+- Build `zlib-ng` and `dav1d` with `-O3`, `ffmpeg`/`libass`/`libplacebo`/`mpv` with `-O2`, and all other third-party libraries with `-Oz`, using Full LTO (`-flto=full`), `-march=x86-64-v2` (x64) / `-march=armv8-a` (arm64), `-fvisibility=hidden` (omitted on Android FFmpeg to keep `av_jni_set_java_vm` exportable), and Android RELR relocation packing. Strip unneeded symbols and do not emit debug symbol archives
+- Preserve stream callbacks, software decoding (curated mainstream+classic FFmpeg whitelist), ASS subtitles + `uchardet`/`iconv`, HLS + MPEG-DASH, NVDEC/CUVID (desktop), AAudio (Android), `screenshot-raw` and the platform rendering/audio backends (Linux includes Wayland/EGL-Wayland/dmabuf-Wayland/VAAPI-Wayland compiled against `wayland 1.23.1` + `wayland-protocols 1.50` while linking Ubuntu 22.04's system `libwayland-*` 1.20.0)
 - Export only `mpv_*` symbols (plus `av_jni_set_java_vm` on Android)
+- Keep `vulkan-headers` as a build-only dependency for libplacebo's disabled Vulkan stubs; keep the Vulkan runtime backend disabled
 
 ## Build, Verify and Package Rules
 

@@ -12,6 +12,34 @@ from libmpv_build.locks import file_lock, target_lock
 
 
 class CliPackageTests(unittest.TestCase):
+    def test_container_image_command_builds_the_locked_local_image(self) -> None:
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            mock.patch("libmpv_build.cli.build_container_image", return_value="libmpv-build:test"),
+            mock.patch("libmpv_build.cli.ROOT", Path("/tmp/libmpv-build-test-root")),
+            mock.patch("libmpv_build.cli.load_lock") as load_lock,
+        ):
+            self.assertEqual(main(["container-image"]), 0)
+        load_lock.assert_called_once()
+        self.assertIn("libmpv-build:test", output.getvalue())
+
+    def test_image_reuse_option_requires_container_mode(self) -> None:
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            mock.patch("libmpv_build.cli.build_targets") as build,
+            self.assertRaises(SystemExit) as failure,
+        ):
+            main(
+                [
+                    "build",
+                    "--target",
+                    "linux-x64",
+                    "--reuse-container-image",
+                ]
+            )
+        self.assertEqual(failure.exception.code, 2)
+        build.assert_not_called()
+
     def test_package_cannot_skip_the_mandatory_linux_smoke_gate(self) -> None:
         with (
             contextlib.redirect_stderr(io.StringIO()),

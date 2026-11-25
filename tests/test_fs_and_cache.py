@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -28,6 +29,7 @@ from libmpv_build.sources import (
     ensure_source_tree,
     fetch_commit,
     materialize_source_tree,
+    verified_source_archive,
 )
 from libmpv_build.toolchains import resolve_android_ndk
 
@@ -372,6 +374,66 @@ class FsAndCacheTests(unittest.TestCase):
                 ):
                     actual = ensure_source_tree(lock, "pkg", cache)
                 self.assertEqual((actual / "file").read_bytes(), b"hello")
+
+    def test_tarball_cache_identity_uses_full_digest(self) -> None:
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self.close()
+
+        first = b"first tarball"
+        second = b"second tarball"
+        first_digest = hashlib.sha256(first).hexdigest()
+        second_digest = hashlib.sha256(second).hexdigest()
+        lock = {
+            "dependencies": {
+                "pkg": {
+                    "url": "https://example.test/pkg.tar.gz",
+                    "sha256": first_digest,
+                }
+            }
+        }
+        with tempfile.TemporaryDirectory() as td:
+            cache = Path(td)
+            with mock.patch(
+                "libmpv_build.sources.urllib.request.urlopen",
+                side_effect=[Response(first), Response(second)],
+            ):
+                first_archive = verified_source_archive(lock, "pkg", cache)
+                lock["dependencies"]["pkg"]["sha256"] = second_digest
+                second_archive = verified_source_archive(lock, "pkg", cache)
+            self.assertNotEqual(first_archive, second_archive)
+            self.assertIn(first_digest, first_archive.name)
+            self.assertIn(second_digest, second_archive.name)
+
+    def test_tarball_source_trees_do_not_alias_matching_digest_prefixes(self) -> None:
+        digests = ("a" * 16 + "1" * 48, "a" * 16 + "2" * 48)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            archive = root / "input.tar.gz"
+            _make_tar_gz(archive, [("pkg-1/file", b"content", "file")])
+            lock = {
+                "dependencies": {
+                    "pkg": {
+                        "url": "https://example.test/pkg.tar.gz",
+                        "stripPrefix": "pkg-1",
+                        "sha256": digests[0],
+                    }
+                }
+            }
+            with mock.patch(
+                "libmpv_build.sources.verified_source_archive", return_value=archive
+            ):
+                first = ensure_source_tree(lock, "pkg", root / "cache")
+                lock["dependencies"]["pkg"]["sha256"] = digests[1]
+                second = ensure_source_tree(lock, "pkg", root / "cache")
+            self.assertNotEqual(first, second)
+            self.assertEqual(first.name, f"pkg-{digests[0]}")
+            self.assertEqual(second.name, f"pkg-{digests[1]}")
+            self.assertTrue((first / "file").is_file())
+            self.assertTrue((second / "file").is_file())
 
     def test_parent_source_restore_waits_for_shared_submodule_lock(self) -> None:
         lock = {

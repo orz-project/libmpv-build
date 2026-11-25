@@ -78,7 +78,7 @@ jobs:
           path: |
             .cache
             build/${{ matrix.target }}
-          key: native-${{ matrix.target }}-${{ hashFiles('dependencies.json', 'libmpv_build/**', 'targets.json', 'Dockerfile', 'patches/**') }}
+          key: native-${{ matrix.target }}-${{ hashFiles('build-config.json', 'dependencies.json', 'libmpv_build/**', 'targets.json', 'Dockerfile', 'patches/**') }}
           restore-keys: native-${{ matrix.target }}-
       - name: Build and verify the locked target
         run: |

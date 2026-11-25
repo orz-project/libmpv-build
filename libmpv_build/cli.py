@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from . import ROOT
-from .builder import build_targets
+from .builder import build_container_image, build_targets
 from .config import TARGETS, load_lock
 from .locks import target_lock
 from .package import package_target
@@ -41,12 +41,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run inside pinned Ubuntu 22.04 Docker container",
     )
     build_p.add_argument(
+        "--reuse-container-image",
+        action="store_true",
+        help="Use an already prepared image that matches the current lock",
+    )
+    build_p.add_argument(
         "--verify-cache",
         action="store_true",
         help="Perform strict byte-for-byte cache SHA-256 checks",
     )
     build_p.add_argument(
         "--no-clean-dist", action="store_true", help="Skip dist cleanup before building"
+    )
+
+    subparsers.add_parser(
+        "container-image", help="Build the local image for the current toolchain lock"
     )
 
     pkg_p = subparsers.add_parser(
@@ -107,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "build":
         if args.jobs < 1:
             parser.error("--jobs must be positive")
+        if args.reuse_container_image and not args.container:
+            parser.error("--reuse-container-image requires --container")
         if platform.system() != "Linux":
             parser.error("Use a Linux build host (including a Linux container runner)")
         lock = load_lock(ROOT / "dependencies.json")
@@ -118,11 +129,17 @@ def main(argv: list[str] | None = None) -> int:
             ndk=args.ndk,
             toolchain=args.toolchain,
             container=args.container,
+            reuse_container_image=args.reuse_container_image,
             verify_cache=args.verify_cache,
             clean_dist_flag=not args.no_clean_dist,
         )
         if receipts:
             print(json.dumps(receipts, indent=4))
+        return 0
+
+    if args.command == "container-image":
+        lock = load_lock(ROOT / "dependencies.json")
+        print(build_container_image(lock))
         return 0
 
     if args.command == "package":

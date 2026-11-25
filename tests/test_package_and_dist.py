@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from libmpv_build import ROOT
+from libmpv_build.builder import TargetBuilder
 from libmpv_build.config import load_lock, load_profiles
 from libmpv_build.fs import sha256_file
 from libmpv_build.package import (
@@ -23,6 +24,26 @@ from libmpv_build.recipes import dependency_identity, resolve_build_order
 
 
 class PackageAndDistTests(unittest.TestCase):
+    def test_changed_loaded_configuration_fails_before_building_or_packaging(self) -> None:
+        lock = load_lock()
+        profile = load_profiles()["linux-x64"]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = json.loads((ROOT / "build-config.json").read_text())
+            config["optimizationTiers"]["dav1d"] = "O2"
+            (root / "build-config.json").write_text(json.dumps(config))
+            builder = TargetBuilder(lock, profile, jobs=1, root=root)
+            for action in (
+                builder.build,
+                lambda: _validate_build_info(lock, profile, root / "prefix", root),
+            ):
+                with self.subTest(action=action), self.assertRaisesRegex(
+                    ValueError, "configuration changed after loading"
+                ):
+                    action()
+            self.assertFalse((root / "build").exists())
+            self.assertFalse((root / "prefix").exists())
+
     def test_clean_dist_preserves_other_targets_for_same_release(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             dist = Path(td)

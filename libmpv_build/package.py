@@ -13,10 +13,12 @@ from pathlib import Path
 
 from . import ROOT
 from .config import (
+    BUILD_CONFIG,
     RELEASE_RE,
     TARGETS,
     LockFile,
     TargetProfile,
+    load_build_config,
     load_lock,
     load_profiles,
 )
@@ -26,10 +28,24 @@ from .recipes import dependency_identity, resolve_build_order
 from .verify import verify_library_file
 
 
+def _validate_loaded_build_config(root: Path) -> None:
+    if load_build_config(root / "build-config.json") != BUILD_CONFIG:
+        raise ValueError(
+            "Build configuration changed after loading; start a new process before building or packaging"
+        )
+
+
 def _build_inputs_snapshot(root: Path) -> dict[str, str]:
     paths = [
         root / name
-        for name in ("dependencies.json", "Dockerfile", "LICENSE", "README.md")
+        for name in (
+            "build-config.json",
+            "dependencies.json",
+            "targets.json",
+            "Dockerfile",
+            "LICENSE",
+            "README.md",
+        )
     ]
     for directory in ("libmpv_build", "patches", "profiles", "include/mpv"):
         base = root / directory
@@ -206,6 +222,7 @@ def promote_files(files: dict[str, Path], output: Path, immutable: set[str]) -> 
 def _validate_build_info(
     lock: LockFile, profile: TargetProfile, prefix: Path, root: Path = ROOT
 ) -> dict:
+    _validate_loaded_build_config(root)
     info_path = prefix / "build-info.json"
     if not info_path.is_file():
         raise ValueError(f"Missing build-info.json under {prefix}")

@@ -12,8 +12,11 @@
         ],
         "mpv": [
             "audiotrack=enabled",
+            "aaudio=enabled",
             "egl-android=enabled",
-            "android-media-ndk=enabled"
+            "android-media-ndk=enabled",
+            "iconv=enabled",
+            "uchardet=enabled"
         ],
         "ffmpeg": [
             "--enable-jni",
@@ -33,8 +36,11 @@
         ],
         "mpv": [
             "audiotrack=enabled",
+            "aaudio=enabled",
             "egl-android=enabled",
-            "android-media-ndk=enabled"
+            "android-media-ndk=enabled",
+            "iconv=enabled",
+            "uchardet=enabled"
         ],
         "ffmpeg": [
             "--enable-jni",
@@ -56,16 +62,20 @@
             "gl-win32=enabled",
             "gl-dxinterop=enabled",
             "d3d-hwaccel=enabled",
-            "d3d9-hwaccel=enabled",
-            "gl-dxinterop-d3d9=enabled",
+            "cuda-hwaccel=enabled",
+            "cuda-interop=enabled",
             "wasapi=enabled",
             "shaderc=enabled",
             "spirv-cross=enabled",
-            "win32-threads=enabled"
+            "win32-threads=enabled",
+            "iconv=enabled",
+            "uchardet=enabled"
         ],
         "ffmpeg": [
             "--enable-d3d11va",
-            "--enable-dxva2"
+            "--enable-ffnvcodec",
+            "--enable-nvdec",
+            "--enable-cuvid"
         ]
     },
     "linux-x64": {
@@ -82,16 +92,26 @@
             "x11=enabled",
             "gl-x11=enabled",
             "egl=enabled",
+            "wayland=enabled",
+            "egl-wayland=enabled",
             "vaapi=enabled",
             "vaapi-x11=enabled",
+            "vaapi-wayland=enabled",
+            "dmabuf-wayland=enabled",
             "vdpau=enabled",
+            "cuda-hwaccel=enabled",
+            "cuda-interop=enabled",
             "pulse=enabled",
             "alsa=enabled",
-            "iconv=enabled"
+            "iconv=enabled",
+            "uchardet=enabled"
         ],
         "ffmpeg": [
             "--enable-vaapi",
-            "--enable-vdpau"
+            "--enable-vdpau",
+            "--enable-ffnvcodec",
+            "--enable-nvdec",
+            "--enable-cuvid"
         ]
     }
 }

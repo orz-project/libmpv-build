@@ -1,5 +1,5 @@
 {
-    "release": "0.42.0-r6",
+    "release": "0.42.0-r1",
     "repository": "Doddddd/libmpv-build",
     "toolchains": {
         "android": {
@@ -21,24 +21,24 @@
             "glibc": "2.35",
             "image": "ubuntu:22.04@sha256:f64b2ffc2f10ab8f8505aa56b2664bd846cbb9df87c7e2532e30f7667021c0e6",
             "meson": "1.12.1",
-            "llvm": "14"
+            "llvm": "21"
         }
     },
     "dependencies": {
-        "zlib": {
-            "repository": "https://github.com/madler/zlib.git",
-            "tagPattern": "v(\\d+\\.\\d+(?:\\.\\d+)?)",
+        "zlib-ng": {
+            "repository": "https://github.com/zlib-ng/zlib-ng.git",
+            "tagPattern": "(\\d+\\.\\d+\\.\\d+)",
             "targets": [
                 "android-arm64-v8a",
                 "android-x86_64",
                 "windows-x64",
                 "linux-x64"
             ],
-            "tag": "v1.4",
-            "version": "1.4",
-            "commit": "99623ef7097352da7993ba614161fd6a311e046e",
-            "date": "2026-11-04T20:32:10-08:00",
-            "sha256": "20cb4bd44248f10e89724108d554f4f9ff31e9a577ca04b34b3d321ccb40bcc0"
+            "tag": "2.3.3",
+            "version": "2.3.3",
+            "commit": "12731092979c6d07f42da27da673a9f6c7b13586",
+            "date": "2026-02-03T22:10:03+01:00",
+            "sha256": "8bc780b24a150385adabdf0e686e7c5f5c50fec9e8c75bd548482c0b9d9632fa"
         },
         "dav1d": {
             "repository": "https://code.videolan.org/videolan/dav1d.git",
@@ -121,6 +121,7 @@
             "targets": [
                 "android-arm64-v8a",
                 "android-x86_64",
+                "windows-x64",
                 "linux-x64"
             ],
             "tag": "v2.15.4",
@@ -128,6 +129,81 @@
             "commit": "96498992efa48d52b0e8b83058bd88dbdaf153c1",
             "date": "2026-09-01T18:16:32+02:00",
             "sha256": "01bfec6c1c3742473c049d952e153e2236a31330668a6a4904641de937e29ff4"
+        },
+        "uchardet": {
+            "repository": "https://gitlab.freedesktop.org/uchardet/uchardet.git",
+            "tagPattern": "v(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "v0.0.8",
+            "version": "0.0.8",
+            "commit": "ae6302a016088ad07177f86d417b20010053632b",
+            "date": "2022-12-08T21:52:25+01:00",
+            "sha256": "893592bcaebab9a47dc7bf4a675a3363779df376910bc621c72145ab9f5fbeba"
+        },
+        "win-iconv": {
+            "repository": "https://github.com/win-iconv/win-iconv.git",
+            "tagPattern": "v?(\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "windows-x64"
+            ],
+            "tag": "v0.0.11",
+            "version": "0.0.11",
+            "commit": "70a279dcfe6318bbe63e019e33b3230b55c19762",
+            "date": "2026-03-08T15:04:35+09:00",
+            "sha256": "4250250ebdd3646a0914c90b6355a8b140a2199eee1f966435620ab4cf941aa9"
+        },
+        "libiconv": {
+            "url": "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.19.1.tar.gz",
+            "stripPrefix": "libiconv-1.19.1",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64"
+            ],
+            "version": "1.19.1",
+            "date": "2026-10-31T14:44:43+00:00",
+            "sha256": "9a06844846d664d7122161700c10a64480d7c7bcead3091925a785b38c91edab"
+        },
+        "nv-codec-headers": {
+            "repository": "https://github.com/FFmpeg/nv-codec-headers.git",
+            "tagPattern": "n(\\d+\\.\\d+\\.\\d+\\.\\d+)",
+            "targets": [
+                "windows-x64",
+                "linux-x64"
+            ],
+            "tag": "n13.1.15.0",
+            "version": "13.1.15.0",
+            "commit": "0a6fba9a2820628b8103464f4c8753ee05838baa",
+            "date": "2026-07-15T01:25:14+02:00",
+            "sha256": "b338cccf04340a4d53c64bb947e67c705e3e01ca90074c346fc6732ac9f7ae67"
+        },
+        "wayland": {
+            "repository": "https://gitlab.freedesktop.org/wayland/wayland.git",
+            "tagPattern": "(1\\.23\\.\\d+)",
+            "targets": [
+                "linux-x64"
+            ],
+            "tag": "1.23.1",
+            "version": "1.23.1",
+            "commit": "a9fec8dd65977c57f4039ced34327204d9b9d779",
+            "date": "2024-08-24T17:43:55+02:00",
+            "sha256": "84f1071b9a8ebca4ee3f3dad3f4b61e24a457f435d37d252c8e7528a57e6c94b"
+        },
+        "wayland-protocols": {
+            "repository": "https://gitlab.freedesktop.org/wayland/wayland-protocols.git",
+            "tagPattern": "(\\d+\\.\\d+)",
+            "targets": [
+                "linux-x64"
+            ],
+            "tag": "1.50",
+            "version": "1.50",
+            "commit": "3eab2dccf4bfdd85c16d312a6c8c8fbc2a6e73a8",
+            "date": "2026-10-29T15:58:31Z",
+            "sha256": "2f387eebff7140028fb4daf47a1f2916c2950e83bb9132bfa310d79751bb658c"
         },
         "fontconfig": {
             "repository": "https://gitlab.freedesktop.org/fontconfig/fontconfig.git",

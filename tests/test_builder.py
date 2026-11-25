@@ -4,6 +4,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -16,6 +17,8 @@ from libmpv_build.builder import (
     STAGE_COMPLETE,
     _stage_is_valid,
     assemble_prefix,
+    container_image_identity,
+    run_in_container,
 )
 from libmpv_build.config import load_lock, load_profiles
 from libmpv_build.fs import capture_tree_manifest, sha256_file
@@ -30,6 +33,124 @@ from libmpv_build.toolchains import (
 
 
 class BuilderTests(unittest.TestCase):
+    def test_container_image_identity_tracks_locked_tool_versions(self) -> None:
+        lock = load_lock()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+            (root / "dependencies.json").write_text(json.dumps(lock.raw))
+            image_tags = []
+            for llvm in ("21", "20"):
+                candidate = json.loads(json.dumps(lock.raw))
+                candidate["toolchains"]["linux"]["llvm"] = llvm
+                path = root / "dependencies.json"
+                path.write_text(json.dumps(candidate))
+                with (
+                    mock.patch("libmpv_build.builder.require_executable"),
+                    mock.patch("libmpv_build.builder.run_cmd") as run,
+                ):
+                    run_in_container(
+                        load_lock(path),
+                        ["linux-x64"],
+                        build_all=False,
+                        jobs=1,
+                        ndk=None,
+                        toolchain=None,
+                        verify_cache=False,
+                        no_clean_dist=False,
+                        root=root,
+                    )
+                build_command = run.call_args_list[0].args[0]
+                image_tags.append(build_command[build_command.index("-t") + 1])
+                self.assertIn(image_tags[-1], run.call_args_list[1].args[0])
+            self.assertNotEqual(*image_tags)
+
+    def test_container_build_reuses_only_the_matching_prepared_image(self) -> None:
+        lock = load_lock()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+            (root / "dependencies.json").write_text(json.dumps(lock.raw))
+            identity, image = container_image_identity(lock, root)
+            with (
+                mock.patch("libmpv_build.builder.require_executable"),
+                mock.patch(
+                    "libmpv_build.builder.capture_cmd", return_value=identity
+                ) as inspect,
+                mock.patch("libmpv_build.builder.run_cmd") as run,
+            ):
+                run_in_container(
+                    lock,
+                    ["linux-x64"],
+                    build_all=False,
+                    jobs=1,
+                    ndk=None,
+                    toolchain=None,
+                    verify_cache=False,
+                    no_clean_dist=False,
+                    reuse_image=True,
+                    root=root,
+                )
+            inspect.assert_called_once()
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[0][0:3], ["docker", "run", "--rm"])
+            self.assertIn(image, run.call_args.args[0])
+
+    def test_container_build_requires_matching_image_when_reuse_is_requested(self) -> None:
+        lock = load_lock()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+            (root / "dependencies.json").write_text(json.dumps(lock.raw))
+            with (
+                mock.patch("libmpv_build.builder.require_executable"),
+                mock.patch(
+                    "libmpv_build.builder.capture_cmd",
+                    side_effect=subprocess.CalledProcessError(1, ["docker"]),
+                ),
+                mock.patch("libmpv_build.builder.run_cmd") as run,
+                self.assertRaisesRegex(RuntimeError, "container-image"),
+            ):
+                run_in_container(
+                    lock,
+                    ["linux-x64"],
+                    build_all=False,
+                    jobs=1,
+                    ndk=None,
+                    toolchain=None,
+                    verify_cache=False,
+                    no_clean_dist=False,
+                    reuse_image=True,
+                    root=root,
+                )
+            run.assert_not_called()
+
+    def test_container_build_rejects_image_with_a_stale_identity_label(self) -> None:
+        lock = load_lock()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+            (root / "dependencies.json").write_text(json.dumps(lock.raw))
+            with (
+                mock.patch("libmpv_build.builder.require_executable"),
+                mock.patch("libmpv_build.builder.capture_cmd", return_value="stale"),
+                mock.patch("libmpv_build.builder.run_cmd") as run,
+                self.assertRaisesRegex(RuntimeError, "does not match the current lock"),
+            ):
+                run_in_container(
+                    lock,
+                    ["linux-x64"],
+                    build_all=False,
+                    jobs=1,
+                    ndk=None,
+                    toolchain=None,
+                    verify_cache=False,
+                    no_clean_dist=False,
+                    reuse_image=True,
+                    root=root,
+                )
+            run.assert_not_called()
+
     def test_source_date_epoch_compares_instants_across_timezones(self) -> None:
         lock = load_lock()
         expected = str(
@@ -43,8 +164,8 @@ class BuilderTests(unittest.TestCase):
         ):
             with self.subTest(first=first_date, second=second_date):
                 first = replace(lock.dependencies["mpv"], date=first_date)
-                second = replace(lock.dependencies["zlib"], date=second_date)
-                candidate = replace(lock, dependencies={"mpv": first, "zlib": second})
+                second = replace(lock.dependencies["zlib-ng"], date=second_date)
+                candidate = replace(lock, dependencies={"mpv": first, "zlib-ng": second})
                 self.assertEqual(_max_source_date_epoch(candidate), expected)
 
     def test_dependency_identity_tracks_process_execution_helper_changes(self) -> None:
@@ -55,11 +176,15 @@ class BuilderTests(unittest.TestCase):
             shutil.copytree(
                 Path(__file__).parents[1] / "libmpv_build", root / "libmpv_build"
             )
+            shutil.copy2(
+                Path(__file__).parents[1] / "build-config.json",
+                root / "build-config.json",
+            )
             shutil.copy2(Path(__file__).parents[1] / "Dockerfile", root / "Dockerfile")
 
             def identity() -> str:
                 return dependency_identity(
-                    "zlib",
+                    "zlib-ng",
                     lock=lock,
                     profile=profile,
                     compiler_version="clang fixture",
@@ -104,6 +229,61 @@ class BuilderTests(unittest.TestCase):
             cmake = cmake_file.read_text(encoding="utf-8")
             self.assertIn('set(CMAKE_SYSTEM_NAME "Android")', cmake)
             self.assertIn('set(CMAKE_SYSTEM_VERSION "28")', cmake)
+
+    def test_toolchain_context_tiered_flags_and_full_lto_files(self) -> None:
+        profile = load_profiles()["linux-x64"]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tc = ToolchainContext(
+                profile=profile,
+                toolroot=None,
+                prefix=root / "prefix",
+                cc="clang-21",
+                cxx="clang++-21",
+                ar="llvm-ar-21",
+                ranlib="llvm-ranlib-21",
+                nm="llvm-nm-21",
+                strip="llvm-strip-21",
+                objcopy="llvm-objcopy-21",
+                windres=None,
+                compiler_version="clang 21",
+                cflags=["-Oz", "-march=x86-64-v2", "-flto=full", "-fvisibility=hidden"],
+                cxxflags=[
+                    "-Oz",
+                    "-march=x86-64-v2",
+                    "-flto=full",
+                    "-fvisibility=hidden",
+                    "-fvisibility-inlines-hidden",
+                ],
+                ldflags=["-fuse-ld=lld-21", "-Wl,--lto-O2"],
+                env={"CFLAGS": "-Oz", "CXXFLAGS": "-Oz"},
+                llvm_version="21",
+            )
+            self.assertEqual(tc.cflags_for("O3")[0], "-O3")
+            self.assertNotIn("-Oz", tc.cflags_for("O3"))
+            self.assertNotIn(
+                "-fvisibility=hidden", tc.cflags_for("O2", hidden_visibility=False)
+            )
+            self.assertNotIn(
+                "-fvisibility-inlines-hidden",
+                tc.cxxflags_for("O2", hidden_visibility=False),
+            )
+            with mock.patch(
+                "libmpv_build.runners.require_executable", side_effect=lambda name: name
+            ):
+                cross_file, native_file, cmake_file = write_toolchain_files(tc, root)
+            cross = cross_file.read_text(encoding="utf-8")
+            native = native_file.read_text(encoding="utf-8")
+            cmake = cmake_file.read_text(encoding="utf-8")
+            self.assertIn("b_lto_mode = 'default'", cross)
+            self.assertIn("buildtype = 'custom'", cross)
+            self.assertNotIn("debug =", cross)
+            self.assertNotIn("optimization =", cross)
+            self.assertIn(f"-L{root / 'prefix' / 'lib'}", cross)
+            self.assertIn("clang-21", native)
+            self.assertIn("-fuse-ld=lld-21", native)
+            self.assertIn("-flto=full", cmake)
+            self.assertNotIn("-Oz", cmake)
 
     def test_stage_cache_rejects_missing_or_changed_outputs_and_strict_tampering(
         self,

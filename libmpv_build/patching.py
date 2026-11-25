@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .config import BUILD_CONFIG, PatchReplacement
+
 
 class PatchError(RuntimeError):
     """Raised when an expected upstream source anchor is missing or ambiguous."""
@@ -106,10 +108,64 @@ def enforce_static_meson_dependencies(
     return updated_files
 
 
+def patch_freetype_modules(
+    source_dir: Path, disabled_modules: tuple[str, ...] | None = None
+) -> None:
+    """Disable legacy and unused FreeType font/raster modules in modules.cfg."""
+    modules_cfg = source_dir / "modules.cfg"
+    disabled_lines = (
+        disabled_modules
+        if disabled_modules is not None
+        else BUILD_CONFIG.patches.freetype_disabled_modules
+    )
+    lines = modules_cfg.read_text(encoding="utf-8").splitlines(keepends=True)
+    for target in disabled_lines:
+        matches = [
+            index for index, raw in enumerate(lines) if raw.rstrip("\r\n") == target
+        ]
+        if len(matches) != 1:
+            raise PatchError(
+                f"Patch anchor mismatch in {modules_cfg}: expected 1 occurrence of {target!r}, found {len(matches)}"
+            )
+        lines[matches[0]] = f"# {lines[matches[0]]}"
+    modules_cfg.write_text("".join(lines), encoding="utf-8")
+
+
+def patch_mpv_wayland_compat(
+    source_dir: Path, replacements: tuple[PatchReplacement, ...] | None = None
+) -> None:
+    """Keep Linux Wayland compatible with Ubuntu 22.04's libwayland-client 1.20.0."""
+    entries = (
+        replacements
+        if replacements is not None
+        else BUILD_CONFIG.patches.mpv_wayland_compat
+    )
+    for item in entries:
+        replace_exact(
+            source_dir / item.file,
+            item.old,
+            item.new,
+            expected_count=1,
+        )
+
+
 def patch_mpv_meson(
-    source_dir: Path, *, final_link_args: list[str], enable_cpp_link: bool
+    source_dir: Path,
+    *,
+    final_link_args: list[str],
+    enable_cpp_link: bool,
+    static_iconv_dir: Path | None = None,
 ) -> None:
     meson_build = source_dir / "meson.build"
+    if static_iconv_dir is not None:
+        # Meson's iconv system probe does not search c_link_args -L directories
+        replace_exact(
+            meson_build,
+            "iconv = dependency('iconv', static: true, required: get_option('iconv'))",
+            "iconv = cc.find_library('iconv', "
+            f"dirs: [{str(static_iconv_dir)!r}], "
+            "static: true, required: get_option('iconv'))",
+        )
     if enable_cpp_link:
         replace_exact(
             meson_build,

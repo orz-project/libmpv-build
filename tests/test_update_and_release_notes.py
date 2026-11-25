@@ -20,6 +20,7 @@ from libmpv_build.update import (
     resolve_one,
     run_update,
     sync_mpv_headers,
+    update_lock,
 )
 
 
@@ -339,6 +340,65 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         ):
             resolve_children(lock, Path("unused-cache"))
 
+    def test_update_removes_stale_gitlink_records_before_repinning_parent(self) -> None:
+        lock = {
+            "dependencies": {
+                "freetype": {
+                    "commit": "1" * 40,
+                    "targets": ["linux-x64"],
+                },
+                "freetype_old": {
+                    "commit": "2" * 40,
+                    "pinFrom": {
+                        "type": "gitlink",
+                        "parent": "freetype",
+                        "path": "subprojects/old",
+                    },
+                },
+            }
+        }
+        module = {
+            "path": "subprojects/dlg",
+            "repository": "https://example.com/dlg.git",
+            "commit": "3" * 40,
+        }
+        with (
+            mock.patch("libmpv_build.update.gitlinks", return_value=[module]),
+            mock.patch(
+                "libmpv_build.update.resolve_dependency",
+                return_value={"commit": "3" * 40},
+            ),
+        ):
+            resolve_children(lock, Path("unused-cache"))
+        self.assertNotIn("freetype_old", lock["dependencies"])
+        self.assertEqual(lock["dependencies"]["freetype_dlg"]["commit"], "3" * 40)
+
+    def test_update_rejects_pin_name_collision_without_replacing_root_dependency(
+        self,
+    ) -> None:
+        root_record = {"repository": "https://example.test/independent.git"}
+        lock = {
+            "dependencies": {
+                "freetype": {"commit": "1" * 40, "targets": ["linux-x64"]},
+                "freetype_dlg": root_record.copy(),
+            }
+        }
+        with (
+            mock.patch(
+                "libmpv_build.update.gitlinks",
+                return_value=[{
+                    "path": "subprojects/dlg",
+                    "repository": "https://example.test/dlg.git",
+                    "commit": "2" * 40,
+                }],
+            ),
+            mock.patch("libmpv_build.update.resolve_dependency") as resolve,
+            self.assertRaisesRegex(ValueError, "Pinned dependency name collision"),
+        ):
+            resolve_children(lock, Path("unused-cache"))
+        resolve.assert_not_called()
+        self.assertEqual(lock["dependencies"]["freetype_dlg"], root_record)
+
     def test_workflow_release_condition_respects_manual_publish_switch(self) -> None:
         workflow = (ROOT / ".github/workflows/native.yml").read_text(encoding="utf-8")
         release = workflow.split("\n  release:\n", 1)[1]
@@ -377,6 +437,20 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         update = workflow.split("\n  update:\n", 1)[1].split("\n  build:\n", 1)[0]
         self.assertIn("    needs: test", update.splitlines())
         self.assertIn("\n      contents: write\n", update)
+
+    def test_update_lock_preserves_tarball_dependencies_without_git(self) -> None:
+        raw = load_lock(ROOT / "dependencies.json").raw
+        with (
+            mock.patch(
+                "libmpv_build.update.resolve_one",
+                side_effect=lambda item, _cache, _initial: item,
+            ) as resolve_git,
+            mock.patch("libmpv_build.update.resolve_children"),
+        ):
+            updated = update_lock(raw, Path("unused"))
+        called_names = {call.args[0][0] for call in resolve_git.call_args_list}
+        self.assertNotIn("libiconv", called_names)
+        self.assertEqual(updated["dependencies"]["libiconv"], raw["dependencies"]["libiconv"])
 
 
 if __name__ == "__main__":

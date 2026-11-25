@@ -6,6 +6,7 @@ import shlex
 import shutil
 from pathlib import Path
 
+from .config import BUILD_CONFIG
 from .process import require_executable, run_cmd
 from .toolchains import ToolchainContext
 
@@ -28,6 +29,17 @@ def write_toolchain_files(
     if tc.profile.system == "windows" and tc.windres:
         bins["windres"] = tc.windres
 
+    meson_cpp_args = [flag for flag in tc.cxxflags if flag != "-static-libstdc++"]
+    meson_link_args = tc.ldflags + [f"-L{tc.prefix}/lib"]
+    meson_cpp_link_args = meson_link_args + (
+        ["-static-libstdc++"] if tc.profile.system in ("android", "windows") else []
+    )
+
+    lto_mode = (
+        "default"
+        if BUILD_CONFIG.toolchain.lto == "full"
+        else BUILD_CONFIG.toolchain.lto
+    )
     lines = ["[binaries]"] + [f"{name} = {value!r}" for name, value in bins.items()]
     lines += [
         "[host_machine]",
@@ -38,23 +50,30 @@ def write_toolchain_files(
         "[built-in options]",
         "default_library = 'static'",
         "b_staticpic = true",
-        "buildtype = 'release'",
-        "optimization = 's'",
+        "buildtype = 'custom'",
         "b_lto = true",
-        "b_lto_mode = 'thin'",
+        f"b_lto_mode = '{lto_mode}'",
         "wrap_mode = 'nodownload'",
         f"c_args = {tc.cflags!r}",
-        f"cpp_args = {tc.cflags!r}",
-        f"c_link_args = {tc.ldflags!r}",
-        f"cpp_link_args = {(tc.ldflags + (['-static-libstdc++'] if tc.profile.system in ('android', 'windows') else []))!r}",
+        f"cpp_args = {meson_cpp_args!r}",
+        f"c_link_args = {meson_link_args!r}",
+        f"cpp_link_args = {meson_cpp_link_args!r}",
     ]
     cross_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    native_versioned = tc.profile.system == "linux" or not shutil.which("clang")
-    native_cc = require_executable("clang-14" if native_versioned else "clang")
-    native_cxx = require_executable("clang++-14" if native_versioned else "clang++")
-    native_linker = "lld-14" if native_versioned else "lld"
-    native_ar = require_executable("llvm-ar-14" if native_versioned else "llvm-ar")
+    llvm_suffix = f"-{tc.llvm_version}" if tc.llvm_version else ""
+    if tc.profile.system == "linux":
+        native_cc = require_executable(f"clang{llvm_suffix}")
+        native_cxx = require_executable(f"clang++{llvm_suffix}")
+        native_linker = f"lld{llvm_suffix}"
+        native_ar = require_executable(f"llvm-ar{llvm_suffix}")
+    else:
+        native_versioned = not shutil.which("clang")
+        fallback_suffix = f"-{tc.llvm_version or '21'}" if native_versioned else ""
+        native_cc = require_executable(f"clang{fallback_suffix}")
+        native_cxx = require_executable(f"clang++{fallback_suffix}")
+        native_linker = f"lld{fallback_suffix}"
+        native_ar = require_executable(f"llvm-ar{fallback_suffix}")
     native_file.write_text(
         "\n".join(
             [
@@ -74,14 +93,19 @@ def write_toolchain_files(
         encoding="utf-8",
     )
 
-    cmake_flags = [flag for flag in tc.cflags if not flag.startswith("-flto")]
+    cmake_c_flags = [flag for flag in tc.cflags if not flag.startswith("-O")]
+    cmake_cxx_flags = [
+        flag
+        for flag in tc.cxxflags
+        if not flag.startswith("-O") and flag != "-static-libstdc++"
+    ]
     cmake = [
         f'set(CMAKE_C_COMPILER "{tc.cc}")',
         f'set(CMAKE_CXX_COMPILER "{tc.cxx}")',
         f'set(CMAKE_AR "{tc.ar}")',
         f'set(CMAKE_RANLIB "{tc.ranlib}")',
-        f'set(CMAKE_C_FLAGS_INIT "{shlex.join(cmake_flags)}")',
-        f'set(CMAKE_CXX_FLAGS_INIT "{shlex.join(cmake_flags)}")',
+        f'set(CMAKE_C_FLAGS_INIT "{shlex.join(cmake_c_flags)}")',
+        f'set(CMAKE_CXX_FLAGS_INIT "{shlex.join(cmake_cxx_flags)}")',
         f'set(CMAKE_EXE_LINKER_FLAGS_INIT "{shlex.join(tc.ldflags)}")',
         f'set(CMAKE_SHARED_LINKER_FLAGS_INIT "{shlex.join(tc.ldflags)}")',
         "set(CMAKE_POSITION_INDEPENDENT_CODE ON)",
@@ -140,24 +164,34 @@ def run_meson(
     options: list[str] | tuple[str, ...] = (),
     *,
     shared: bool = False,
+    opt: str = "Oz",
+    hidden_visibility: bool = True,
+    native: bool = False,
 ) -> None:
     meson_bin = require_executable("meson")
     cross_file = base_dir / "cross.ini"
     native_file = base_dir / "native.ini"
+    c_args = tc.cflags_for(opt, hidden_visibility=hidden_visibility)
+    cpp_args = [
+        flag
+        for flag in tc.cxxflags_for(opt, hidden_visibility=hidden_visibility)
+        if flag != "-static-libstdc++"
+    ]
     command: list[str | Path] = [
         meson_bin,
         "setup",
         build_dir,
         source,
-        "--cross-file",
+        "--native-file" if native else "--cross-file",
         cross_file,
-        "--native-file",
-        native_file,
+        *([] if native else ["--native-file", native_file]),
         "--prefix",
         tc.prefix,
         "--libdir",
         "lib",
         "--wrap-mode=nodownload",
+        f"-Dc_args={c_args!r}",
+        f"-Dcpp_args={cpp_args!r}",
     ]
     if shared:
         command += ["--default-library=shared", "-Db_lundef=true"]
@@ -185,31 +219,50 @@ def run_cmake(
     *,
     targets: list[str] | None = None,
     install: bool = True,
+    opt: str = "Oz",
+    hidden_visibility: bool = True,
 ) -> Path:
     cmake_file = base_dir / "toolchain.cmake"
     setup_env = tc.env.copy()
     for key in ("CFLAGS", "CXXFLAGS", "LDFLAGS"):
         setup_env.pop(key, None)
-    run_cmd(
-        [
-            "cmake",
-            "-S",
-            source,
-            "-B",
-            build_dir,
-            "-G",
-            "Ninja",
-            f"-DCMAKE_TOOLCHAIN_FILE={cmake_file}",
-            f"-DCMAKE_INSTALL_PREFIX={tc.prefix}",
-            "-DCMAKE_INSTALL_LIBDIR=lib",
-            "-DCMAKE_BUILD_TYPE=MinSizeRel",
-            "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON",
-            "-DBUILD_SHARED_LIBS=OFF",
-            "-DBUILD_TESTING=OFF",
-            *options,
-        ],
-        env=setup_env,
-    )
+    build_type = "Release" if opt in ("O2", "O3") else "MinSizeRel"
+    build_tag = build_type.upper()
+    cmake_args: list[str | Path] = [
+        "cmake",
+        "-S",
+        source,
+        "-B",
+        build_dir,
+        "-G",
+        "Ninja",
+        f"-DCMAKE_TOOLCHAIN_FILE={cmake_file}",
+        f"-DCMAKE_INSTALL_PREFIX={tc.prefix}",
+        "-DCMAKE_INSTALL_LIBDIR=lib",
+        f"-DCMAKE_BUILD_TYPE={build_type}",
+        "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
+        f"-DCMAKE_C_FLAGS_{build_tag}=-{opt} -DNDEBUG",
+        f"-DCMAKE_CXX_FLAGS_{build_tag}=-{opt} -DNDEBUG",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DBUILD_TESTING=OFF",
+    ]
+    if not hidden_visibility:
+        c_init = [
+            flag
+            for flag in tc.cflags_for(opt, hidden_visibility=False)
+            if not flag.startswith("-O")
+        ]
+        cxx_init = [
+            flag
+            for flag in tc.cxxflags_for(opt, hidden_visibility=False)
+            if not flag.startswith("-O") and flag != "-static-libstdc++"
+        ]
+        cmake_args += [
+            f"-DCMAKE_C_FLAGS_INIT={shlex.join(c_init)}",
+            f"-DCMAKE_CXX_FLAGS_INIT={shlex.join(cxx_init)}",
+        ]
+    cmake_args.extend(options)
+    run_cmd(cmake_args, env=setup_env)
     build_cmd: list[str | Path] = [
         "cmake",
         "--build",
@@ -234,16 +287,20 @@ def run_autotools(
     destdir: Path,
     jobs: int,
     options: list[str] | tuple[str, ...] = (),
+    *,
+    opt: str = "Oz",
+    hidden_visibility: bool = True,
 ) -> None:
+    build_env = tc.env_for(opt, hidden_visibility=hidden_visibility)
     if not (source / "configure").is_file():
         if (source / "autogen.sh").is_file():
             run_cmd(
                 ["sh", source / "autogen.sh"],
                 cwd=source,
-                env={**tc.env, "NOCONFIGURE": "1"},
+                env={**build_env, "NOCONFIGURE": "1"},
             )
         else:
-            run_cmd(["autoreconf", "-fi"], cwd=source, env=tc.env)
+            run_cmd(["autoreconf", "-fi"], cwd=source, env=build_env)
     build_dir.mkdir(parents=True, exist_ok=True)
     run_cmd(
         [
@@ -256,10 +313,10 @@ def run_autotools(
             *options,
         ],
         cwd=build_dir,
-        env=tc.env,
+        env=build_env,
     )
-    run_cmd(["make", f"-j{jobs}"], cwd=build_dir, env=tc.env)
-    run_cmd(["make", f"DESTDIR={destdir}", "install"], cwd=build_dir, env=tc.env)
+    run_cmd(["make", f"-j{jobs}"], cwd=build_dir, env=build_env)
+    run_cmd(["make", f"DESTDIR={destdir}", "install"], cwd=build_dir, env=build_env)
 
 
 def write_pkgconfig(

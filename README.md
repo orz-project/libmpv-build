@@ -10,28 +10,31 @@ python3 -m libmpv_build <build|package|verify|update|release-notes> [options]
 
 | 目标 | 运行库 | 最低条件 | 保留的系统后端 |
 | --- | --- | --- | --- |
-| `android-arm64-v8a` | `libmpv.so` | API 28，16 KiB ELF 对齐 | GLES、MediaCodec、AudioTrack |
-| `android-x86_64` | `libmpv.so` | API 28，16 KiB ELF 对齐 | GLES、MediaCodec、AudioTrack |
-| `windows-x64` | `libmpv-2.dll` | Windows x64 / UCRT | D3D11、OpenGL、WASAPI、DirectWrite |
-| `linux-x64` | `libmpv.so.2` | glibc ≤ 2.35（Ubuntu 22.04 基线） | OpenGL/EGL、VAAPI、VDPAU、PulseAudio、ALSA |
+| `android-arm64-v8a` | `libmpv.so` | API 28，ARMv8-A，16 KiB ELF 对齐，RELR 重定位压缩 | GLES、MediaCodec、AAudio、AudioTrack |
+| `android-x86_64` | `libmpv.so` | API 28，x86-64-v2，16 KiB ELF 对齐，RELR 重定位压缩 | GLES、MediaCodec、AAudio、AudioTrack |
+| `windows-x64` | `libmpv-2.dll` | Windows 10 x64 / UCRT，x86-64-v2 | D3D11、OpenGL、NVDEC/CUDA、WASAPI、DirectWrite |
+| `linux-x64` | `libmpv.so.2` | glibc ≤ 2.35（Ubuntu 22.04 基线），x86-64-v2 | OpenGL/EGL、X11、Wayland（`egl-wayland`、`dmabuf-wayland`）、VAAPI、VDPAU、NVDEC/CUDA、PulseAudio、ALSA |
 
 每个目标输出一个确定性 ZIP：`dist/libmpv-<release>-<target>.zip`，内含单个已 strip 的运行库，并在 `dist/SHA256SUMS` 中记录摘要。
 
-- 第三方库全部静态链接进运行库，仅依赖各平台的系统图形/音频接口；Windows 上 `libass` 使用 DirectWrite，不带 `fontconfig`/`libxml2`
-- FFmpeg 以 `-O2` + ThinLTO 编译以保证软解吞吐，其余第三方库使用 `-Os` + ThinLTO
-- 保留 stream callback、软件解码、ASS 字幕、HLS、`screenshot-raw` 及各平台渲染/音频后端
+- 第三方库全部静态链接进运行库，仅依赖各平台的系统图形/音频接口；Windows 上 `libass` 使用 DirectWrite（不带 `fontconfig`），`libxml2` 全平台仅启用精简解析供 FFmpeg MPEG-DASH 与 Android/Linux `fontconfig` 使用
+- 分层优化 + Full LTO：`zlib-ng`、`dav1d` 使用 `-O3`，`ffmpeg`、`libass`、`libplacebo`、`mpv` 使用 `-O2`，其余第三方库使用 `-Oz`，并启用 `-fvisibility=hidden`（Android FFmpeg 为保留 `av_jni_set_java_vm` 导出除外）、`-fno-semantic-interposition` 与 `--icf=safe`
+- 保留 stream callback、主流与经典全覆盖的精简 FFmpeg 解码/解复用白名单、ASS 字幕 + `uchardet` 自动编码检测（Windows 用 `win-iconv`，Android 静态合入 GNU `libiconv`）、HLS + MPEG-DASH、`screenshot-raw` 及各平台渲染/音频后端；Linux 通过前缀构建 `wayland 1.23.1`（仅保留 `wayland-scanner` 与头文件）和 `wayland-protocols 1.50` 启用完整 Wayland/EGL/dmabuf/VAAPI 支持，同时修补兼容队列创建调用以保持直接链接系统 `libwayland-*` 1.20.0（Ubuntu 22.04 基线）
 - 对外仅导出 `mpv_*` 符号（Android 额外导出 `av_jni_set_java_vm`），公开头文件见 `include/mpv/`
+
+Vulkan 后端保持关闭，但锁定版 libplacebo 的占位实现仍引用 Vulkan 公共类型，因此四平台保留 `vulkan-headers` 作为编译期依赖；它不增加运行库动态依赖
 
 ## 依赖锁定
 
-`dependencies.json` 是唯一的版本来源，记录发行号（`release`）、工具链、构建工具，以及每个依赖的 tag、版本、完整 commit、上游日期与源码 SHA-256。
+`dependencies.json` 是唯一的版本来源，记录发行号（`release`）、工具链、构建工具，以及每个依赖的 tag、版本、完整 commit/tarball URL、上游日期与源码 SHA-256。Dockerfile 从同一锁文件读取 LLVM 版本及 Meson 版本和安装摘要，锁文件变化会更新容器镜像身份。
 
 | 类别 | 内容 |
 | --- | --- |
-| 工具链 | Android NDK r29（`29.0.14206865`）、llvm-mingw UCRT、Ubuntu 22.04 镜像（clang/LLVM 14） |
+| 工具链 | Android NDK r29（`29.0.14206865`）、llvm-mingw UCRT、Ubuntu 22.04 镜像（Clang/LLD 21，保持 glibc 2.35 基线） |
 | 构建工具 | Meson（按 hash 安装） |
-| 核心依赖 | mpv、FFmpeg、libplacebo、libass、dav1d、freetype、fribidi、harfbuzz、libunibreak、zlib、Vulkan-Headers |
-| 平台专属 | `fontconfig`/`libxml2`（Android、Linux）；`shaderc`/`spirv-cross`/`glslang`/`SPIRV-*`（Windows） |
+| 核心依赖 | mpv、FFmpeg、libplacebo、libass、dav1d、freetype（裁剪古董驱动）、fribidi、harfbuzz、libunibreak、libxml2、zlib-ng（compat 模式）、uchardet |
+| 平台专属 | `fontconfig`、`libiconv`（Android）；`fontconfig`、`nv-codec-headers`、`wayland`（scanner+头文件）、`wayland-protocols`（Linux）；`shaderc`（关闭 HLSL）、`spirv-cross`、`glslang`、`SPIRV-*`、`win-iconv`、`nv-codec-headers`（Windows） |
+| 编译期头文件 | `vulkan-headers`（四平台，供 libplacebo 占位实现编译，不启用 Vulkan 后端） |
 
 各目标的 configure 选项在 `targets.json` 中声明；第三方许可证位于 `licenses/`。
 
@@ -55,6 +58,15 @@ python3 -m libmpv_build build --target windows-x64 --container --jobs 4
 python3 -m libmpv_build build --target android-x86_64 --container --jobs 4 --ndk /path/to/ndk/29.0.14206865
 ```
 
+本地可以预先封装一次与当前 `dependencies.json`、`Dockerfile` 和 Ubuntu digest 匹配的镜像，后续构建直接复用：
+
+```sh
+python3 -m libmpv_build container-image
+python3 -m libmpv_build build --target linux-x64 --container --reuse-container-image --jobs 4
+```
+
+`--reuse-container-image` 只接受带有当前锁定身份的本地镜像；镜像不存在或锁文件、Dockerfile 发生变化时会立即失败，并提示重新执行 `container-image`。
+
 ### `build` 参数
 
 | 参数 | 说明 |
@@ -62,6 +74,7 @@ python3 -m libmpv_build build --target android-x86_64 --container --jobs 4 --ndk
 | `--target <t>` / `--all` | 二选一：单个目标或全部目标 |
 | `--jobs N` | 并行度，默认 `min(CPU 数, 8)` |
 | `--container` | 在锁定的 Ubuntu 22.04 容器内构建 |
+| `--reuse-container-image` | 仅本地使用已准备且与当前锁定身份匹配的镜像；必须同时指定 `--container` |
 | `--ndk DIR` | 使用本机 NDK，revision 必须为 `29.0.14206865`；容器内以只读方式挂载 |
 | `--toolchain DIR` | 使用本机 llvm-mingw UCRT 工具链（须与锁定版本一致） |
 | `--verify-cache` | 对源码/工具链缓存执行全量逐字节 SHA-256 复核 |
@@ -84,7 +97,7 @@ python3 -m libmpv_build build --target android-x86_64 --container --jobs 4 --ndk
 
 ```sh
 # 校验运行库文件或交付 ZIP
-python3 -m libmpv_build verify --target linux-x64 --path dist/libmpv-0.42.0-r6-linux-x64.zip --smoke
+python3 -m libmpv_build verify --target linux-x64 --path dist/libmpv-0.42.0-r7-linux-x64.zip --smoke
 
 # 对已构建的 prefix 重新打包
 python3 -m libmpv_build package --target linux-x64 --prefix build/linux-x64/prefix
@@ -99,12 +112,15 @@ python3 -m libmpv_build package --target linux-x64 --prefix build/linux-x64/pref
 | Linux | 所需 `GLIBC` 符号版本 ≤ 2.35；`DT_NEEDED` 白名单；`--smoke` 通过 `ctypes` 装载并初始化 |
 | Windows | PE32+ AMD64 DLL；导入仅限系统 DLL 白名单；禁止转发导出和无名序号导出 |
 
+`build-config.json` 可增加必须导出的公共 API，但不能删掉应用依赖的 stream callback、render callback、命令结果等最低运行契约。
+
 `package` 的约束：
 
 - 公开头文件一致性校验与 Linux 装载初始化冒烟强制执行，不提供跳过开关
 - `build-info.json` 绑定编译输入身份、实际安装的库与头文件 SHA-256；库被替换、头文件变动或旧记录缺少摘要时必须重新构建
 - 打包期间输入发生变化即中止，并保留上一次成功的产物；ZIP 时间戳取自 `SOURCE_DATE_EPOCH`（默认 `0`）
 - 独立 `package` 与同目标 `build` 共用同一把构建锁
+- 构建或打包进程加载配置后若 `build-config.json` 变化，立即拒绝操作，需启动新进程重新加载配置
 
 ## 依赖更新与发布说明
 
@@ -133,7 +149,8 @@ python3 -m libmpv_build release-notes --output release-notes.md
 | 路径 | 内容 |
 | --- | --- |
 | `libmpv_build/` | 构建系统：CLI、锁文件、源码与工具链、配方、DAG 构建、校验、打包、更新 |
-| `dependencies.json` | 版本、commit、日期与摘要锁定 |
+| `build-config.json` | 编译/链接参数、分层优化等级、各依赖配方选项、FFmpeg 裁剪白名单、源码补丁与校验白名单配置 |
+| `dependencies.json` | 版本、commit/tarball URL、日期与摘要锁定 |
 | `targets.json` | 各目标的平台参数与 configure 选项 |
 | `patches/` | Android / 桌面端导出符号表 |
 | `include/mpv/` | 与锁定 mpv 版本一致的公开头文件 |

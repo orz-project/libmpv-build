@@ -40,6 +40,7 @@ class BinaryInfo:
     needed_libs: tuple[str, ...]
     exports: frozenset[str]
     glibc_versions: tuple[str, ...]
+    elf_dynamic_tags: frozenset[int]
 
 
 def _require_range(blob: bytes, offset: int, size: int, label: str) -> None:
@@ -163,6 +164,7 @@ def inspect_elf64(path: Path) -> BinaryInfo:
     exports: set[str] = set()
     glibc_versions: set[str] = set()
     dynamic_values: dict[int, int] = {}
+    dynamic_tags: set[int] = set()
     symbol_names: list[str] = []
     visible_symbol_indices: set[int] = set()
 
@@ -183,6 +185,7 @@ def inspect_elf64(path: Path) -> BinaryInfo:
                 if d_tag == 0:
                     terminated = True
                     break
+                dynamic_tags.add(d_tag)
                 if d_tag in (
                     0x7FFFFFFD,
                     0x7FFFFFFF,
@@ -436,6 +439,7 @@ def inspect_elf64(path: Path) -> BinaryInfo:
         needed_libs=tuple(needed),
         exports=frozenset(exports),
         glibc_versions=tuple(sorted(glibc_versions, key=_parse_glibc_version)),
+        elf_dynamic_tags=frozenset(dynamic_tags),
     )
 
 
@@ -586,6 +590,7 @@ def inspect_pe64(path: Path) -> BinaryInfo:
         needed_libs=tuple(needed),
         exports=frozenset(exports),
         glibc_versions=(),
+        elf_dynamic_tags=frozenset(),
     )
 
 
@@ -714,6 +719,17 @@ def verify_library_file(
             errors.append(
                 f"ELF machine mismatch: expected {expected_machine}, got {info.machine}"
             )
+        if info.elf_dynamic_tags & {35, 36, 37}:
+            if (
+                profile.system == "android"
+                and profile.api is not None
+                and profile.api < 30
+            ):
+                errors.append(
+                    "Standard DT_RELR requires Android API 30 or newer; API 28 must use Android RELR tags"
+                )
+            elif profile.system == "linux" and MAX_GLIBC_VERSION < (2, 36):
+                errors.append("Standard DT_RELR requires glibc 2.36 or newer")
         if profile.system == "android":
             bad_aligns = [
                 align

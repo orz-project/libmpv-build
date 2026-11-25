@@ -8,7 +8,9 @@ from libmpv_build.config import LINUX_SYSTEM_LIBRARIES, STATIC_PACKAGES
 from libmpv_build.patching import (
     PatchError,
     enforce_static_meson_dependencies,
+    patch_freetype_modules,
     patch_mpv_meson,
+    patch_mpv_wayland_compat,
     replace_exact,
     rewrite_linux_pc_system_libs,
 )
@@ -80,6 +82,32 @@ class PatchingTests(unittest.TestCase):
             self.assertIn("# dependency('libass', static: false)", patched)
             self.assertIn("message(\"dependency('libass', static: false)\")", patched)
 
+    def test_mpv_static_iconv_probes_the_installed_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            source = Path(td)
+            meson = source / "meson.build"
+            original = "iconv = dependency('iconv', required: get_option('iconv'))\n"
+            meson.write_text(original, encoding="utf-8")
+            enforce_static_meson_dependencies(source, STATIC_PACKAGES)
+            patch_mpv_meson(
+                source,
+                final_link_args=[],
+                enable_cpp_link=False,
+                static_iconv_dir=Path("/prefix/lib"),
+            )
+            self.assertEqual(
+                meson.read_text(encoding="utf-8"),
+                "iconv = cc.find_library('iconv', dirs: ['/prefix/lib'], "
+                "static: true, required: get_option('iconv'))\n",
+            )
+            with self.assertRaises(PatchError):
+                patch_mpv_meson(
+                    source,
+                    final_link_args=[],
+                    enable_cpp_link=False,
+                    static_iconv_dir=Path("/prefix/lib"),
+                )
+
     def test_static_meson_patch_rejects_conflicting_or_unterminated_dependency(
         self,
     ) -> None:
@@ -108,6 +136,64 @@ class PatchingTests(unittest.TestCase):
                     "/usr/lib/x86_64-linux-gnu/libm.so", pc.read_text(encoding="utf-8")
                 )
                 self.assertIn("-lcustom", pc.read_text(encoding="utf-8"))
+
+    def test_patch_freetype_modules_disables_legacy_and_fails_fast(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td)
+            cfg = src / "modules.cfg"
+            lines = [
+                "FONT_MODULES += truetype",
+                "FONT_MODULES += type1",
+                "FONT_MODULES += cff",
+                "FONT_MODULES += cid",
+                "FONT_MODULES += hvf",
+                "FONT_MODULES += pfr",
+                "FONT_MODULES += type42",
+                "FONT_MODULES += winfonts",
+                "FONT_MODULES += pcf",
+                "FONT_MODULES += bdf",
+                "FONT_MODULES += sfnt",
+                "RASTER_MODULES += smooth",
+                "RASTER_MODULES += raster",
+                "RASTER_MODULES += svg",
+                "RASTER_MODULES += sdf",
+                "AUX_MODULES += lzw",
+                "AUX_MODULES += bzip2",
+                "BASE_EXTENSIONS += ftbdf.c",
+                "BASE_EXTENSIONS += ftcid.c",
+                "BASE_EXTENSIONS += ftpfr.c",
+                "BASE_EXTENSIONS += fttype1.c",
+                "BASE_EXTENSIONS += ftwinfnt.c",
+            ]
+            cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            patch_freetype_modules(src)
+            patched = cfg.read_text(encoding="utf-8")
+            self.assertIn("FONT_MODULES += truetype\n", patched)
+            self.assertIn("# FONT_MODULES += type1\n", patched)
+            self.assertIn("\nBASE_EXTENSIONS += fttype1.c\n", patched)
+            self.assertNotIn("# BASE_EXTENSIONS += fttype1.c", patched)
+            self.assertIn("# BASE_EXTENSIONS += ftwinfnt.c\n", patched)
+            with self.assertRaises(PatchError):
+                patch_freetype_modules(src)
+
+    def test_patch_mpv_wayland_compat_replaces_named_queues_and_fails_fast(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td)
+            wayland_common = src / "video/out/wayland_common.c"
+            wayland_common.parent.mkdir(parents=True)
+            wayland_common.write_text(
+                'q1 = wl_display_create_queue_with_name(wl->display, "image description info queue");\n'
+                'q2 = wl_display_create_queue_with_name(wl->display, "image description creator queue");\n',
+                encoding="utf-8",
+            )
+            patch_mpv_wayland_compat(src)
+            patched = wayland_common.read_text(encoding="utf-8")
+            self.assertNotIn("wl_display_create_queue_with_name", patched)
+            self.assertEqual(patched.count("wl_display_create_queue(wl->display)"), 2)
+            with self.assertRaises(PatchError):
+                patch_mpv_wayland_compat(src)
 
 
 if __name__ == "__main__":
