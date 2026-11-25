@@ -1,5 +1,5 @@
 {
-    "release": "0.42.0-r1",
+    "release": "0.42.0-20261125-5539cf5d7811",
     "repository": "Doddddd/libmpv-build",
     "toolchains": {
         "android": {
@@ -187,11 +187,11 @@
             "targets": [
                 "linux-x64"
             ],
-            "tag": "1.23.1",
-            "version": "1.23.1",
-            "commit": "a9fec8dd65977c57f4039ced34327204d9b9d779",
-            "date": "2024-08-24T17:43:55+02:00",
-            "sha256": "84f1071b9a8ebca4ee3f3dad3f4b61e24a457f435d37d252c8e7528a57e6c94b"
+            "tag": "1.23.93",
+            "version": "1.23.93",
+            "commit": "0fa6f267f2bf7ca9f0171dc49841dfd4eaf1eef3",
+            "date": "2025-06-21T13:46:19+02:00",
+            "sha256": "eb3b691ebb41e84e5c6eac5867786744999d0b74464e1b50f092b7808c79ddfa"
         },
         "wayland-protocols": {
             "repository": "https://gitlab.freedesktop.org/wayland/wayland-protocols.git",
@@ -302,6 +302,21 @@
             "commit": "f11ba9f0b21ba8fc15153d50a2a1ae31ab1cf8f7",
             "date": "2026-09-16T13:27:19+02:00",
             "sha256": "4468489ba56904a1c2512578be7d6e5de76068d9d6c37b9025805ce3895ccaf7"
+        },
+        "vulkan-headers": {
+            "repository": "https://github.com/KhronosGroup/Vulkan-Headers.git",
+            "tag": "vulkan-sdk-1.4.363.0",
+            "tagPattern": "vulkan-sdk-(\\d+\\.\\d+\\.\\d+\\.\\d+)",
+            "version": "1.4.363.0",
+            "targets": [
+                "android-arm64-v8a",
+                "android-x86_64",
+                "windows-x64",
+                "linux-x64"
+            ],
+            "commit": "6802bb4733b63ed5efd3adb308a6c885ef180ea1",
+            "date": "2026-09-18T01:47:48+01:00",
+            "sha256": "66f2488c977c1d26337d608d58c39a8a8f5c1c9a48a24331d5814b69736ca35e"
         },
         "libplacebo_glad": {
             "repository": "https://github.com/Dav1dde/glad",
@@ -445,21 +460,6 @@
             "commit": "ef96ed763b43b59b33b31b362f09a02b729fa1c9",
             "date": "2026-09-10T09:28:18-04:00",
             "sha256": "929c74449a5dabaa01b7b1bdb3049bc8ea7e7e0dd69f6bdaf6f3c9c0a0c3273a"
-        },
-        "vulkan-headers": {
-            "repository": "https://github.com/KhronosGroup/Vulkan-Headers.git",
-            "tag": "vulkan-sdk-1.4.363.0",
-            "tagPattern": "vulkan-sdk-(\\d+\\.\\d+\\.\\d+\\.\\d+)",
-            "version": "1.4.363.0",
-            "targets": [
-                "android-arm64-v8a",
-                "android-x86_64",
-                "windows-x64",
-                "linux-x64"
-            ],
-            "commit": "6802bb4733b63ed5efd3adb308a6c885ef180ea1",
-            "date": "2026-09-18T01:47:48+01:00",
-            "sha256": "66f2488c977c1d26337d608d58c39a8a8f5c1c9a48a24331d5814b69736ca35e"
         }
     },
     "buildTools": {
