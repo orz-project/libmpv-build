@@ -97,7 +97,7 @@ python3 -m libmpv_build build --target linux-x64 --container --reuse-container-i
 
 ```sh
 # 校验运行库文件或交付 ZIP
-python3 -m libmpv_build verify --target linux-x64 --path dist/libmpv-0.42.0-r7-linux-x64.zip --smoke
+python3 -m libmpv_build verify --target linux-x64 --path dist/libmpv-0.42.0-r1-linux-x64.zip --smoke
 
 # 对已构建的 prefix 重新打包
 python3 -m libmpv_build package --target linux-x64 --prefix build/linux-x64/prefix

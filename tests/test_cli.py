@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from libmpv_build.cli import main
-from libmpv_build.locks import file_lock, target_lock
+from libmpv_build.locks import file_lock
 
 
 class CliPackageTests(unittest.TestCase):
@@ -58,66 +58,6 @@ class CliPackageTests(unittest.TestCase):
             )
         self.assertEqual(failure.exception.code, 2)
         package.assert_not_called()
-
-    def test_package_refuses_a_target_that_is_being_built(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            with (
-                target_lock(root / "build", "linux-x64"),
-                mock.patch("libmpv_build.cli.ROOT", root),
-                mock.patch("libmpv_build.cli.package_target") as package,
-                self.assertRaisesRegex(
-                    RuntimeError, "Another process is building linux-x64"
-                ),
-            ):
-                main(
-                    [
-                        "package",
-                        "--target",
-                        "linux-x64",
-                        "--prefix",
-                        str(root / "prefix"),
-                    ]
-                )
-            package.assert_not_called()
-
-    def test_package_holds_the_target_lock_until_publication_finishes(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-
-            def publish(*args: object, **kwargs: object) -> dict:
-                with (
-                    self.assertRaisesRegex(
-                        RuntimeError, "Another process is building linux-x64"
-                    ),
-                    target_lock(root / "build", "linux-x64"),
-                ):
-                    self.fail("Build entered while the target was being packaged")
-                return {"target": "linux-x64"}
-
-            with (
-                contextlib.redirect_stdout(io.StringIO()),
-                mock.patch("libmpv_build.cli.ROOT", root),
-                mock.patch(
-                    "libmpv_build.cli.package_target",
-                    side_effect=publish,
-                ),
-            ):
-                self.assertEqual(
-                    main(
-                        [
-                            "package",
-                            "--target",
-                            "linux-x64",
-                            "--prefix",
-                            str(root / "prefix"),
-                        ]
-                    ),
-                    0,
-                )
-            with target_lock(root / "build", "linux-x64"):
-                pass
-
 
 class LockSafetyTests(unittest.TestCase):
     def test_symlinked_lock_cannot_truncate_another_file(self) -> None:

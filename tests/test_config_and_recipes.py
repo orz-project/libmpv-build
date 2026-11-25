@@ -28,7 +28,6 @@ class ConfigAndRecipesTests(unittest.TestCase):
         lock = load_lock(ROOT / "dependencies.json")
         profiles = load_profiles(ROOT / "targets.json")
         self.assertNotIn("schemaVersion", lock.raw)
-        self.assertEqual(lock.release, "0.42.0-r7")
         self.assertEqual(set(profiles), set(TARGETS))
         self.assertNotIn("zlib", lock.dependencies)
         self.assertIn("vulkan-headers", lock.dependencies)

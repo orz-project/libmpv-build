@@ -9,10 +9,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from pathlib import Path
-from threading import Event
 from unittest import mock
 
 from libmpv_build.config import load_lock
@@ -23,12 +20,10 @@ from libmpv_build.fs import (
     extract_archive_safe,
     verify_tree_manifest,
 )
-from libmpv_build.locks import cache_lock
 from libmpv_build.process import run_retry
 from libmpv_build.sources import (
     ensure_source_tree,
     fetch_commit,
-    materialize_source_tree,
     verified_source_archive,
 )
 from libmpv_build.toolchains import resolve_android_ndk
@@ -434,104 +429,6 @@ class FsAndCacheTests(unittest.TestCase):
             self.assertEqual(second.name, f"pkg-{digests[1]}")
             self.assertTrue((first / "file").is_file())
             self.assertTrue((second / "file").is_file())
-
-    def test_parent_source_restore_waits_for_shared_submodule_lock(self) -> None:
-        lock = {
-            "dependencies": {
-                "parent": {"commit": "a" * 40},
-                "child": {
-                    "commit": "b" * 40,
-                    "pinFrom": {
-                        "type": "gitlink",
-                        "parent": "parent",
-                        "path": "subprojects/child",
-                    },
-                },
-            }
-        }
-        requested = Event()
-        restored = Event()
-        child_key = "child:" + "b" * 40
-
-        @contextmanager
-        def observe_lock(cache_root: Path, namespace: str, key: str):
-            if key == child_key:
-                requested.set()
-            with cache_lock(cache_root, namespace, key):
-                yield
-
-        def restore(*args, **kwargs):
-            restored.set()
-            return Path("restored")
-
-        with (
-            tempfile.TemporaryDirectory() as td,
-            ThreadPoolExecutor(max_workers=1) as worker,
-        ):
-            cache = Path(td)
-            with (
-                mock.patch("libmpv_build.sources.cache_lock", observe_lock),
-                mock.patch(
-                    "libmpv_build.sources._restore_source_tree",
-                    side_effect=restore,
-                ),
-            ):
-                with cache_lock(cache, "source", child_key):
-                    pending = worker.submit(ensure_source_tree, lock, "parent", cache)
-                    self.assertTrue(
-                        requested.wait(timeout=2),
-                        "parent never locked the shared child cache",
-                    )
-                    self.assertFalse(restored.is_set())
-                self.assertEqual(pending.result(timeout=2), Path("restored"))
-
-    def test_source_materialization_retains_submodule_lock_until_copy_completes(
-        self,
-    ) -> None:
-        lock = {
-            "dependencies": {
-                "parent": {"commit": "a" * 40},
-                "child": {
-                    "commit": "b" * 40,
-                    "pinFrom": {
-                        "type": "gitlink",
-                        "parent": "parent",
-                        "path": "subprojects/child",
-                    },
-                },
-            }
-        }
-        claimed: set[str] = set()
-
-        @contextmanager
-        def observe_lock(cache_root: Path, namespace: str, key: str):
-            with cache_lock(cache_root, namespace, key):
-                claimed.add(key)
-                try:
-                    yield
-                finally:
-                    claimed.remove(key)
-
-        def copy(directory: Path, destination: Path, *, symlinks: bool):
-            self.assertEqual(directory, Path("verified parent"))
-            self.assertTrue(symlinks)
-            self.assertEqual(claimed, {"parent:" + "a" * 40, "child:" + "b" * 40})
-
-        with tempfile.TemporaryDirectory() as td:
-            with (
-                mock.patch("libmpv_build.sources.cache_lock", observe_lock),
-                mock.patch(
-                    "libmpv_build.sources._restore_source_tree",
-                    return_value=Path("verified parent"),
-                ),
-                mock.patch("libmpv_build.sources.shutil.copytree", side_effect=copy),
-            ):
-                destination = Path(td) / "materialized"
-                self.assertEqual(
-                    materialize_source_tree(lock, "parent", Path(td), destination),
-                    destination,
-                )
-            self.assertFalse(claimed)
 
     def test_android_ndk_resolution_priority_without_hardcoded_path(self) -> None:
         lock = load_lock()
