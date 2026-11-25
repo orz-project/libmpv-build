@@ -138,10 +138,9 @@ jobs:
           COMMIT: ${{ needs.update.outputs.commit }}
         run: |
           set -euo pipefail
-          VERSION="${RELEASE#mpv-}"
           mkdir -p release-files
           for target in android-arm64-v8a android-x86_64 windows-x64 linux-x64; do
-            file="libmpv-${VERSION}-${target}.zip"
+            file="libmpv-${RELEASE}-${target}.zip"
             src="$(find "artifacts/${target}" -type f -name "$file" -print -quit)"
             test -n "$src"
             cp "$src" "release-files/${file}"
@@ -159,19 +158,17 @@ jobs:
           COMMIT: ${{ needs.update.outputs.commit }}
         run: |
           set -euo pipefail
-          TAG="${RELEASE#mpv-}"
-          existing_tag="$(git ls-remote --tags origin "refs/tags/$TAG")"
-          if test -n "$existing_tag"; then
-            echo "Tag $TAG already exists; refusing to overwrite immutable tag" >&2
-            exit 1
+          if gh release view "$RELEASE" >/dev/null 2>&1; then
+            gh release upload "$RELEASE" \
+              release-files/libmpv-*.zip \
+              release-files/SHA256SUMS \
+              --clobber
+            gh release edit "$RELEASE" --notes-file release-notes.md
+          else
+            gh release create "$RELEASE" \
+              release-files/libmpv-*.zip \
+              release-files/SHA256SUMS \
+              --target "$COMMIT" \
+              --title "$RELEASE" \
+              --notes-file release-notes.md
           fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; refusing to overwrite immutable tag" >&2
-            exit 1
-          fi
-          gh release create "$TAG" \
-            release-files/libmpv-*.zip \
-            release-files/SHA256SUMS \
-            --target "$COMMIT" \
-            --title "$TAG" \
-            --notes-file release-notes.md

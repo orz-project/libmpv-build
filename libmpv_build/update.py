@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import datetime
-import hashlib
 import json
 import re
 import shutil
@@ -39,19 +37,14 @@ def latest_tag(specification: dict, tags: str) -> tuple[str, str]:
     return tag, version
 
 
-def resolve_one(item: tuple[str, dict], cache: Path, initial: bool) -> tuple[str, dict]:
+def resolve_one(item: tuple[str, dict], cache: Path) -> tuple[str, dict]:
     name, specification = item
     validate_https_url(specification["repository"], f"Dependency {name}")
-    if not initial:
-        tags = run_retry(["git", "ls-remote", "--tags", specification["repository"]])
-        tag, version = latest_tag(specification, tags)
-        if (
-            tag == specification.get("tag")
-            and specification.get("commit")
-            and specification.get("sha256")
-        ):
-            return name, specification
-        specification = {**specification, "tag": tag, "version": version}
+    tags = run_retry(["git", "ls-remote", "--tags", specification["repository"]])
+    tag, version = latest_tag(specification, tags)
+    if tag == specification["tag"]:
+        return name, specification
+    specification = {**specification, "tag": tag, "version": version}
     print(f"Resolving {name} {specification['tag']}", flush=True)
     return name, resolve_dependency(name, specification, cache)
 
@@ -204,7 +197,7 @@ def _validate_candidate(candidate: dict, root: Path) -> None:
         load_lock(candidate_path)
 
 
-def update_lock(lock_raw: dict, cache: Path, initial: bool = False) -> dict:
+def update_lock(lock_raw: dict, cache: Path) -> dict:
     candidate = json.loads(json.dumps(lock_raw))
     roots = [
         (name, specification)
@@ -212,19 +205,16 @@ def update_lock(lock_raw: dict, cache: Path, initial: bool = False) -> dict:
         if "pinFrom" not in specification and "repository" in specification
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(resolve_one, item, cache, initial) for item in roots]
+        futures = [pool.submit(resolve_one, item, cache) for item in roots]
         for future in concurrent.futures.as_completed(futures):
             name, specification = future.result()
             candidate["dependencies"][name] = specification
     resolve_children(candidate, cache)
-    if not initial and candidate["dependencies"] != lock_raw["dependencies"]:
-        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
-        identity = hashlib.sha256(
-            json.dumps(candidate["dependencies"], sort_keys=True).encode("utf-8")
-        ).hexdigest()[:12]
-        candidate["release"] = (
-            f"{candidate['dependencies']['mpv']['version']}-{stamp}-{identity}"
-        )
+    if candidate["dependencies"] != lock_raw["dependencies"]:
+        version = candidate["dependencies"]["mpv"]["version"]
+        previous_version, previous_revision = lock_raw["release"].rsplit("-r", 1)
+        revision = int(previous_revision) + 1 if version == previous_version else 1
+        candidate["release"] = f"{version}-r{revision}"
     return candidate
 
 
@@ -289,7 +279,6 @@ def run_update(
     *,
     lock_path: Path,
     cache_root: Path,
-    initial: bool = False,
     write: bool = False,
     commit: bool = False,
     github_output: Path | None = None,
@@ -302,9 +291,8 @@ def run_update(
     with file_lock(root / ".cache/locks/update.lock"):
         original_text = lock_path.read_text(encoding="utf-8")
         original = json.loads(original_text)
-        if not initial:
-            _validate_candidate(original, root)
-        candidate = update_lock(original, cache_root, initial=initial)
+        _validate_candidate(original, root)
+        candidate = update_lock(original, cache_root)
         _validate_candidate(candidate, root)
         changed = original != candidate
         header_changes: list[Path] = []

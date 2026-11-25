@@ -1,5 +1,5 @@
 {
-    "release": "0.42.0-20261125-5539cf5d7811",
+    "release": "0.42.0-r1",
     "repository": "Doddddd/libmpv-build",
     "toolchains": {
         "android": {

@@ -87,7 +87,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     upd_p.add_argument("--lock", type=Path, default=ROOT / "dependencies.json")
     upd_p.add_argument("--cache", type=Path, default=ROOT / ".cache")
-    upd_p.add_argument("--initial", action="store_true")
     upd_p.add_argument("--write", action="store_true")
     upd_p.add_argument("--commit", action="store_true")
     upd_p.add_argument("--github-output", type=Path)
@@ -168,7 +167,6 @@ def main(argv: list[str] | None = None) -> int:
         result = run_update(
             lock_path=args.lock,
             cache_root=args.cache,
-            initial=args.initial,
             write=args.write,
             commit=args.commit,
             github_output=args.github_output,

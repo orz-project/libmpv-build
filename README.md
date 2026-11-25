@@ -139,10 +139,10 @@ python3 -m libmpv_build release-notes --output release-notes.md
 | 触发 | 行为 |
 | --- | --- |
 | `push`（`main`/`master`）、`pull_request` | 运行单元测试 |
-| `schedule`（每日 UTC 20:00） | 检查上游更新；有更新时推送锁文件提交，四个目标全部构建并校验通过后发布不可变 GitHub Release |
-| `workflow_dispatch` | 默认只做验证构建；勾选 `publish=true` 且新 tag 不存在时才发布 |
+| `schedule`（每日 UTC 20:00） | 检查上游更新；有更新时推送锁文件提交，四个目标全部构建并校验通过后发布 GitHub Release |
+| `workflow_dispatch` | 默认只做验证构建；勾选 `publish=true` 时发布，同名 Release 已存在时覆盖编译产物 |
 
-已存在的 tag 或 Release 永远不会被覆盖。
+已存在的 Release 会替换四个平台的同名 ZIP 和 `SHA256SUMS`，并更新发布说明；已存在的 tag 保留原提交指向。tag 已存在但尚无 Release 时，会基于该 tag 创建 Release。
 
 ## 仓库结构
 

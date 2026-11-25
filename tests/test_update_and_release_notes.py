@@ -42,27 +42,53 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         )
         self.assertEqual((tag, ver), ("v0.42.1", "0.42.1"))
 
-    def test_update_validates_repository_before_invoking_git_for_initial_lock(
-        self,
-    ) -> None:
-        for initial in (False, True):
+    def test_dependency_updates_increment_revision_and_mpv_updates_reset_it(self) -> None:
+        for revision, changes, expected in (
+            (1, {"ffmpeg": {"commit": "b" * 40}}, "1.2.3-r2"),
+            (9, {"ffmpeg": {"commit": "b" * 40}}, "1.2.3-r10"),
+            (9, {"mpv": {"version": "1.3.0"}}, "1.3.0-r1"),
+            (9, {"mpv": {"commit": "b" * 40}}, "1.2.3-r10"),
+        ):
+            raw = {
+                "release": f"1.2.3-r{revision}",
+                "dependencies": {
+                    "mpv": {
+                        "version": "1.2.3",
+                        "repository": "https://example.test/mpv.git",
+                    },
+                    "ffmpeg": {
+                        "commit": "a" * 40,
+                        "repository": "https://example.test/ffmpeg.git",
+                    },
+                },
+            }
+
+            def resolve(item, _cache, changes=changes):
+                name, record = item
+                return name, {**record, **changes.get(name, {})}
+
             with (
-                self.subTest(initial=initial),
-                mock.patch("libmpv_build.update.run_retry") as git,
+                self.subTest(revision=revision, changes=changes),
+                mock.patch("libmpv_build.update.resolve_one", side_effect=resolve),
+                mock.patch("libmpv_build.update.resolve_children"),
             ):
-                with self.assertRaisesRegex(ValueError, "HTTPS URL"):
-                    resolve_one(
-                        (
-                            "mpv",
-                            {
-                                "repository": "--upload-pack=unexpected",
-                                "tag": "v0.42.0",
-                            },
-                        ),
-                        Path("unused"),
-                        initial,
-                    )
-                git.assert_not_called()
+                updated = update_lock(raw, Path("unused"))
+                self.assertEqual(updated["release"], expected)
+
+    def test_update_validates_repository_before_invoking_git(self) -> None:
+        with mock.patch("libmpv_build.update.run_retry") as git:
+            with self.assertRaisesRegex(ValueError, "HTTPS URL"):
+                resolve_one(
+                    (
+                        "mpv",
+                        {
+                            "repository": "--upload-pack=unexpected",
+                            "tag": "v0.42.0",
+                        },
+                    ),
+                    Path("unused"),
+                )
+            git.assert_not_called()
 
     def test_release_notes_renders_diff_and_checksums(self) -> None:
         current = load_lock(ROOT / "dependencies.json").raw
@@ -443,14 +469,14 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         with (
             mock.patch(
                 "libmpv_build.update.resolve_one",
-                side_effect=lambda item, _cache, _initial: item,
+                side_effect=lambda item, _cache: item,
             ) as resolve_git,
             mock.patch("libmpv_build.update.resolve_children"),
         ):
             updated = update_lock(raw, Path("unused"))
         called_names = {call.args[0][0] for call in resolve_git.call_args_list}
         self.assertNotIn("libiconv", called_names)
-        self.assertEqual(updated["dependencies"]["libiconv"], raw["dependencies"]["libiconv"])
+        self.assertEqual(updated, raw)
 
 
 if __name__ == "__main__":
