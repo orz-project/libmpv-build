@@ -18,7 +18,8 @@ python3 -m libmpv_build <build|package|verify|update|release-notes> [options]
 每个目标输出一个确定性 ZIP：`dist/libmpv-<release>-<target>.zip`，内含单个已 strip 的运行库，并在 `dist/SHA256SUMS` 中记录摘要。
 
 - 第三方库全部静态链接进运行库，仅依赖各平台的系统图形/音频接口；Windows 上 `libass` 使用 DirectWrite（不带 `fontconfig`），`libxml2` 全平台仅启用精简解析供 FFmpeg MPEG-DASH 与 Android/Linux `fontconfig` 使用
-- 分层优化 + Full LTO：`zlib-ng`、`dav1d` 使用 `-O3`，`ffmpeg`、`libass`、`libplacebo`、`mpv` 使用 `-O2`，其余第三方库使用 `-Oz`，并启用 `-fvisibility=hidden`（Android FFmpeg 为保留 `av_jni_set_java_vm` 导出除外）、`-fno-semantic-interposition` 与 `--icf=safe`
+- 分层优化 + Full LTO：`zlib-ng`、`dav1d` 使用 `-O3`，`ffmpeg`、`libass`、`libplacebo`、`mpv` 使用 `-O2`，`freetype`、`harfbuzz`、`shaderc`、`spirv-cross` 使用 `-Os`，其余第三方库使用 `-Oz`，统一启用 Full LTO（`-flto=full` 与 `-Wl,--lto-O2`）、`-fno-math-errno`、`-fvisibility=hidden`（Android FFmpeg 为保留 `av_jni_set_java_vm` 导出除外）、`-fno-semantic-interposition` 与 `--icf=safe`；Linux 启用 Full RELRO（`-Wl,-z,relro,-z,now`），`uchardet`/`libplacebo` 关闭 C++ 异常与 RTTI，`fribidi` 跳过未使用的 CLI 工具，且 x86_64 专属参数（`dav1d` `stack_alignment=16`、`uchardet` `CHECK_SSE2`）仅对 `x86_64` 生效
+- 发布策略由 `build-config.json` 统一控制：通用 `-DNDEBUG` 配合 Meson 的 `debug=false`、`b_ndebug=true` 关闭调试信息、普通开发断言和 mpv TA 内存调试，保留独立的 `mp_assert` 检查。CMake 将所选优化等级传入通用 C/C++ flags，避免 zlib-ng 将显式 `-O3` 降为 `-O2`；配方附加的 C++ 参数在平台初始化参数之后应用，确保 Android 上 `uchardet` 的异常与 RTTI 禁用设置生效，同时保留平台加固参数
 - 保留 stream callback、主流与经典全覆盖的精简 FFmpeg 解码/解复用白名单、ASS 字幕 + `uchardet` 自动编码检测（Windows 用 `win-iconv`，Android 静态合入 GNU `libiconv`）、HLS + MPEG-DASH、`screenshot-raw` 及各平台渲染/音频后端；Linux 通过前缀构建 `wayland 1.23.1`（仅保留 `wayland-scanner` 与头文件）和 `wayland-protocols 1.50` 启用完整 Wayland/EGL/dmabuf/VAAPI 支持，同时修补兼容队列创建调用以保持直接链接系统 `libwayland-*` 1.20.0（Ubuntu 22.04 基线）
 - 对外仅导出 `mpv_*` 符号（Android 额外导出 `av_jni_set_java_vm`），公开头文件见 `include/mpv/`
 
@@ -26,12 +27,12 @@ Vulkan 后端保持关闭，但锁定版 libplacebo 的占位实现仍引用 Vul
 
 ## 依赖锁定
 
-`dependencies.json` 是唯一的版本来源，记录发行号（`release`）、工具链、构建工具，以及每个依赖的 tag、版本、完整 commit/tarball URL、上游日期与源码 SHA-256。Dockerfile 从同一锁文件读取 LLVM 版本及 Meson 版本和安装摘要，锁文件变化会更新容器镜像身份。
+`dependencies.json` 是唯一的版本来源，记录发行号（`release`）、工具链、构建工具，以及每个依赖的 tag、版本、完整 commit/tarball URL、上游日期与源码 SHA-256。`repository` 仅用于各 Git 依赖的源码仓库地址，顶层不需要该字段。Dockerfile 从同一锁文件读取 LLVM 版本及 Meson 版本和安装摘要，锁文件变化会更新容器镜像身份。
 
 | 类别 | 内容 |
 | --- | --- |
-| 工具链 | Android NDK r29（`29.0.14206865`）、llvm-mingw UCRT、Ubuntu 22.04 镜像（Clang/LLD 21，保持 glibc 2.35 基线） |
-| 构建工具 | Meson（按 hash 安装） |
+| 工具链 | Android NDK r30（`30.0.16248370`）、llvm-mingw UCRT、Ubuntu 22.04 镜像（Clang/LLD 23，保持 glibc 2.35 基线） |
+| 构建工具 | Meson、Ninja（按 hash 安装）、CMake 4.5.1（按 SHA-256 安装） |
 | 核心依赖 | mpv、FFmpeg、libplacebo、libass、dav1d、freetype（裁剪古董驱动）、fribidi、harfbuzz、libunibreak、libxml2、zlib-ng（compat 模式）、uchardet |
 | 平台专属 | `fontconfig`、`libiconv`（Android）；`fontconfig`、`nv-codec-headers`、`wayland`（scanner+头文件）、`wayland-protocols`（Linux）；`shaderc`（关闭 HLSL）、`spirv-cross`、`glslang`、`SPIRV-*`、`win-iconv`、`nv-codec-headers`（Windows） |
 | 编译期头文件 | `vulkan-headers`（四平台，供 libplacebo 占位实现编译，不启用 Vulkan 后端） |
@@ -55,7 +56,7 @@ python3 -m libmpv_build build --all --container --jobs 4
 # 单目标构建
 python3 -m libmpv_build build --target linux-x64 --container --jobs 4
 python3 -m libmpv_build build --target windows-x64 --container --jobs 4
-python3 -m libmpv_build build --target android-x86_64 --container --jobs 4 --ndk /path/to/ndk/29.0.14206865
+python3 -m libmpv_build build --target android-x86_64 --container --jobs 4
 ```
 
 本地可以预先封装一次与当前 `dependencies.json`、`Dockerfile` 和 Ubuntu digest 匹配的镜像，后续构建直接复用：
@@ -75,12 +76,19 @@ python3 -m libmpv_build build --target linux-x64 --container --reuse-container-i
 | `--jobs N` | 并行度，默认 `min(CPU 数, 8)` |
 | `--container` | 在锁定的 Ubuntu 22.04 容器内构建 |
 | `--reuse-container-image` | 仅本地使用已准备且与当前锁定身份匹配的镜像；必须同时指定 `--container` |
-| `--ndk DIR` | 使用本机 NDK，revision 必须为 `29.0.14206865`；容器内以只读方式挂载 |
+| `--ndk DIR` | 使用本机 NDK，revision 必须为 `30.0.16248370`；容器内以只读方式挂载 |
 | `--toolchain DIR` | 使用本机 llvm-mingw UCRT 工具链（须与锁定版本一致） |
 | `--verify-cache` | 对源码/工具链缓存执行全量逐字节 SHA-256 复核 |
 | `--no-clean-dist` | 跳过构建前的 `dist` 清理 |
 
-未指定 `--ndk` 时依次尝试 `ANDROID_NDK_ROOT`、`ANDROID_NDK_HOME`、`$ANDROID_HOME/ndk/<revision>`、`$ANDROID_SDK_ROOT/ndk/<revision>`，都不可用时下载锁定的 NDK 压缩包。
+未指定 `--ndk` 时依次尝试 `ANDROID_NDK_ROOT`、`ANDROID_NDK_HOME`、`$ANDROID_HOME/ndk/<revision>`、`$ANDROID_SDK_ROOT/ndk/<revision>`，只使用与 `dependencies.json` 锁定 revision 一致的本地 NDK；缺失、元数据不可读或版本不符的候选会跳过。使用 `--container` 构建 Android 目标（包括 `--all`）时，也会在宿主机自动查找，并将找到的 NDK 只读挂载到容器，无需手动指定 `--ndk`。本地没有匹配版本时，继续使用工具链缓存或下载锁定的 NDK 压缩包；显式 `--ndk` 路径或版本不正确时仍会报错。
+
+例如，SDK 安装在 `~/tool/Android-SDK` 且已安装 `ndk/30.0.16248370` 时：
+
+```sh
+export ANDROID_HOME="$HOME/tool/Android-SDK"
+python3 -m libmpv_build build --target android-arm64-v8a --container --jobs 4
+```
 
 ### 增量缓存
 
@@ -138,9 +146,17 @@ python3 -m libmpv_build release-notes --output release-notes.md
 
 | 触发 | 行为 |
 | --- | --- |
-| `push`（`main`/`master`）、`pull_request` | 运行单元测试 |
-| `schedule`（每日 UTC 20:00） | 检查上游更新；有更新时推送锁文件提交，四个目标全部构建并校验通过后发布 GitHub Release |
-| `workflow_dispatch` | 默认只做验证构建；勾选 `publish=true` 时发布，同名 Release 已存在时覆盖编译产物 |
+| `pull_request` | 运行单元测试 |
+| `schedule`（每日 UTC 20:30，北京时间次日 04:30） | 先检查依赖，有更新时提交并推送锁文件；随后始终构建四个目标，有更新且构建校验全部通过时发布 GitHub Release |
+| `workflow_dispatch` | 通过 `mode` 选择下表中的模式，默认 `check-build` |
+
+| 手动模式 | 行为 |
+| --- | --- |
+| `check-only`（只更新并提交） | 检查上游稳定版本，有更新时写入锁文件、同步 mpv 头文件并提交推送，不编译或发布；没有更新时不创建提交 |
+| `build-only`（只编译） | 不检查上游更新，使用所选 Git ref 中的锁定依赖构建四个目标 |
+| `check-build`（先检查后编译） | 检查上游更新，有更新时提交并推送锁文件，再使用该提交构建四个目标；没有更新也会编译 |
+
+所有模式都先运行单元测试。依赖更新提交推送到触发运行的分支，手动运行时为所选分支。手动构建时，只有勾选 `publish=true` 才发布 GitHub Release；`check-only` 忽略该选项。
 
 已存在的 Release 会替换四个平台的同名 ZIP 和 `SHA256SUMS`，并更新发布说明；已存在的 tag 保留原提交指向。tag 已存在但尚无 Release 时，会基于该 tag 创建 Release。
 

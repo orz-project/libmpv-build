@@ -46,6 +46,28 @@ def generate_release_notes(
             nv = new_tc.get(tc, {}).get("version", "-")
             if ov != nv:
                 changes.append((f"toolchain:{tc}", ov, nv))
+            elif tc == "android":
+                o_rev = old_tc.get(tc, {}).get("revision", "-")
+                n_rev = new_tc.get(tc, {}).get("revision", "-")
+                if o_rev != n_rev:
+                    changes.append((f"toolchain:{tc}", o_rev, n_rev))
+            if tc == "linux":
+                o_llvm = old_tc.get(tc, {}).get("llvm", "-")
+                n_llvm = new_tc.get(tc, {}).get("llvm", "-")
+                if o_llvm != n_llvm:
+                    changes.append(("toolchain:linux:llvm", o_llvm, n_llvm))
+        old_tools = baseline.get("buildTools", {})
+        new_tools = current.get("buildTools", {})
+        for tool in sorted(set(old_tools) | set(new_tools)):
+            if tool not in old_tools:
+                changes.append((f"build-tool:{tool}", "（新增）", _dep_ver(new_tools[tool])))
+            elif tool not in new_tools:
+                changes.append((f"build-tool:{tool}", _dep_ver(old_tools[tool]), "（移除）"))
+            else:
+                ov = _dep_ver(old_tools[tool])
+                nv = _dep_ver(new_tools[tool])
+                if ov != nv:
+                    changes.append((f"build-tool:{tool}", ov, nv))
         lines.append(
             f"### 版本升级明细（对比 `{baseline_label}`）"
             if baseline_label

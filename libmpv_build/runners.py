@@ -35,11 +35,6 @@ def write_toolchain_files(
         ["-static-libstdc++"] if tc.profile.system in ("android", "windows") else []
     )
 
-    lto_mode = (
-        "default"
-        if BUILD_CONFIG.toolchain.lto == "full"
-        else BUILD_CONFIG.toolchain.lto
-    )
     lines = ["[binaries]"] + [f"{name} = {value!r}" for name, value in bins.items()]
     lines += [
         "[host_machine]",
@@ -49,10 +44,9 @@ def write_toolchain_files(
         "endian = 'little'",
         "[built-in options]",
         "default_library = 'static'",
-        "b_staticpic = true",
+        f"b_staticpic = {'false' if tc.profile.system == 'windows' else 'true'}",
         "buildtype = 'custom'",
-        "b_lto = true",
-        f"b_lto_mode = '{lto_mode}'",
+        "b_lto = false",
         "wrap_mode = 'nodownload'",
         f"c_args = {tc.cflags!r}",
         f"cpp_args = {meson_cpp_args!r}",
@@ -69,7 +63,9 @@ def write_toolchain_files(
         native_ar = require_executable(f"llvm-ar{llvm_suffix}")
     else:
         native_versioned = not shutil.which("clang")
-        fallback_suffix = f"-{tc.llvm_version or '21'}" if native_versioned else ""
+        fallback_suffix = (
+            f"-{tc.llvm_version}" if (native_versioned and tc.llvm_version) else ""
+        )
         native_cc = require_executable(f"clang{fallback_suffix}")
         native_cxx = require_executable(f"clang++{fallback_suffix}")
         native_linker = f"lld{fallback_suffix}"
@@ -104,14 +100,19 @@ def write_toolchain_files(
         f'set(CMAKE_CXX_COMPILER "{tc.cxx}")',
         f'set(CMAKE_AR "{tc.ar}")',
         f'set(CMAKE_RANLIB "{tc.ranlib}")',
-        f'set(CMAKE_C_FLAGS_INIT "{shlex.join(cmake_c_flags)}")',
-        f'set(CMAKE_CXX_FLAGS_INIT "{shlex.join(cmake_cxx_flags)}")',
+        "if(NOT DEFINED CMAKE_C_FLAGS_INIT)",
+        f'    set(CMAKE_C_FLAGS_INIT "{shlex.join(cmake_c_flags)}")',
+        "endif()",
+        "if(NOT DEFINED CMAKE_CXX_FLAGS_INIT)",
+        f'    set(CMAKE_CXX_FLAGS_INIT "{shlex.join(cmake_cxx_flags)}")',
+        "endif()",
         f'set(CMAKE_EXE_LINKER_FLAGS_INIT "{shlex.join(tc.ldflags)}")',
         f'set(CMAKE_SHARED_LINKER_FLAGS_INIT "{shlex.join(tc.ldflags)}")',
-        "set(CMAKE_POSITION_INDEPENDENT_CODE ON)",
-        "set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)",
+        'set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)',
         f'set(CMAKE_FIND_ROOT_PATH "{tc.prefix}")',
     ]
+    if tc.profile.system != "windows":
+        cmake.append("set(CMAKE_POSITION_INDEPENDENT_CODE ON)")
     for language in ("C", "CXX"):
         cmake += [
             f'set(CMAKE_{language}_COMPILER_AR "{tc.ar}")',
@@ -196,6 +197,7 @@ def run_meson(
     if shared:
         command += ["--default-library=shared", "-Db_lundef=true"]
     command += [f"-D{option}" for option in options]
+    command += [f"-D{option}" for option in BUILD_CONFIG.toolchain.meson_options]
 
     setup_env = tc.env.copy()
     for key in ("CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
@@ -221,6 +223,7 @@ def run_cmake(
     install: bool = True,
     opt: str = "Oz",
     hidden_visibility: bool = True,
+    extra_cxxflags: list[str] | tuple[str, ...] = (),
 ) -> Path:
     cmake_file = base_dir / "toolchain.cmake"
     setup_env = tc.env.copy()
@@ -228,6 +231,16 @@ def run_cmake(
         setup_env.pop(key, None)
     build_type = "Release" if opt in ("O2", "O3") else "MinSizeRel"
     build_tag = build_type.upper()
+    c_init = tc.cflags_for(opt, hidden_visibility=hidden_visibility)
+    cxx_init = [
+        flag
+        for flag in tc.cxxflags_for(opt, hidden_visibility=hidden_visibility)
+        if flag != "-static-libstdc++"
+    ]
+    c_build_flag = "" if "-DNDEBUG" in c_init else "-DNDEBUG"
+    cxx_build_flags = list(extra_cxxflags)
+    if "-DNDEBUG" not in cxx_init and "-DNDEBUG" not in cxx_build_flags:
+        cxx_build_flags.append("-DNDEBUG")
     cmake_args: list[str | Path] = [
         "cmake",
         "-S",
@@ -241,26 +254,13 @@ def run_cmake(
         "-DCMAKE_INSTALL_LIBDIR=lib",
         f"-DCMAKE_BUILD_TYPE={build_type}",
         "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
-        f"-DCMAKE_C_FLAGS_{build_tag}=-{opt} -DNDEBUG",
-        f"-DCMAKE_CXX_FLAGS_{build_tag}=-{opt} -DNDEBUG",
+        f"-DCMAKE_C_FLAGS_INIT={shlex.join(c_init)}",
+        f"-DCMAKE_CXX_FLAGS_INIT={shlex.join(cxx_init)}",
+        f"-DCMAKE_C_FLAGS_{build_tag}={c_build_flag}",
+        f"-DCMAKE_CXX_FLAGS_{build_tag}={shlex.join(cxx_build_flags)}",
         "-DBUILD_SHARED_LIBS=OFF",
         "-DBUILD_TESTING=OFF",
     ]
-    if not hidden_visibility:
-        c_init = [
-            flag
-            for flag in tc.cflags_for(opt, hidden_visibility=False)
-            if not flag.startswith("-O")
-        ]
-        cxx_init = [
-            flag
-            for flag in tc.cxxflags_for(opt, hidden_visibility=False)
-            if not flag.startswith("-O") and flag != "-static-libstdc++"
-        ]
-        cmake_args += [
-            f"-DCMAKE_C_FLAGS_INIT={shlex.join(c_init)}",
-            f"-DCMAKE_CXX_FLAGS_INIT={shlex.join(cxx_init)}",
-        ]
     cmake_args.extend(options)
     run_cmd(cmake_args, env=setup_env)
     build_cmd: list[str | Path] = [

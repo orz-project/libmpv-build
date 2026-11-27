@@ -203,6 +203,44 @@ def find_toolchain_root(root: Path, marker: str) -> Path:
     return choices[0]
 
 
+def _android_ndk_revision(root: Path) -> str | None:
+    try:
+        properties = (root / "source.properties").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    actual = re.search(r"^Pkg\.Revision\s*=\s*(\S+)\s*$", properties, re.MULTILINE)
+    return actual.group(1) if actual else None
+
+
+def find_local_android_ndk(lock: LockFile, ndk_arg: str | None = None) -> Path | None:
+    """Find the locked NDK from an explicit path or SDK environment without downloading."""
+    revision = lock.toolchains["android"].raw["revision"]
+    if ndk_arg:
+        explicit = Path(ndk_arg).expanduser()
+        if not (explicit / "source.properties").is_file():
+            raise RuntimeError(
+                f"The requested Android NDK directory is invalid: {ndk_arg}"
+            )
+        if _android_ndk_revision(explicit) != revision:
+            raise RuntimeError(f"Android NDK must be {revision}, found {explicit}")
+        return explicit.resolve()
+
+    candidates: list[str | None] = [
+        os.environ.get("ANDROID_NDK_ROOT"),
+        os.environ.get("ANDROID_NDK_HOME"),
+    ]
+    for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        sdk = os.environ.get(variable)
+        if sdk:
+            candidates.append(str(Path(sdk).expanduser() / "ndk" / revision))
+    for value in candidates:
+        if value:
+            root = Path(value).expanduser()
+            if _android_ndk_revision(root) == revision:
+                return root.resolve()
+    return None
+
+
 def resolve_android_ndk(
     lock: LockFile,
     ndk_arg: str | None,
@@ -211,42 +249,16 @@ def resolve_android_ndk(
     verify_cache: bool = False,
 ) -> Path:
     """Resolve Android NDK via explicit flag, standard SDK env vars, or locked archive download."""
+    root = find_local_android_ndk(lock, ndk_arg)
+    if root is not None:
+        return root
     record = lock.toolchains["android"].raw
     revision = record["revision"]
-    if ndk_arg:
-        explicit = Path(ndk_arg).expanduser()
-        if not (explicit / "source.properties").is_file():
-            raise RuntimeError(
-                f"The requested Android NDK directory is invalid: {ndk_arg}"
-            )
-        root = explicit.resolve()
-    else:
-        candidates: list[str | None] = [
-            os.environ.get("ANDROID_NDK_ROOT"),
-            os.environ.get("ANDROID_NDK_HOME"),
-        ]
-        for variable in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
-            sdk = os.environ.get(variable)
-            if sdk:
-                candidates.append(str(Path(sdk).expanduser() / "ndk" / revision))
-        root = next(
-            (
-                Path(value).expanduser().resolve()
-                for value in candidates
-                if value and (Path(value).expanduser() / "source.properties").is_file()
-            ),
-            None,
-        )
-        if root is None:
-            root = find_toolchain_root(
-                restore_toolchain_archive(
-                    record, cache_root, verify_cache=verify_cache
-                ),
-                "source.properties",
-            )
-    properties = (root / "source.properties").read_text(encoding="utf-8")
-    actual = re.search(r"^Pkg\.Revision\s*=\s*(\S+)\s*$", properties, re.MULTILINE)
-    if not actual or actual.group(1) != revision:
+    root = find_toolchain_root(
+        restore_toolchain_archive(record, cache_root, verify_cache=verify_cache),
+        "source.properties",
+    )
+    if _android_ndk_revision(root) != revision:
         raise RuntimeError(f"Android NDK must be {revision}, found {root}")
     return root
 
@@ -297,7 +309,7 @@ def prepare_toolchain(
     _strip_host_compiler_env(env)
     toolroot: Path | None = None
     windres: str | None = None
-    llvm_version: str | None = None
+    llvm_version = str(lock.toolchains["linux"].raw["llvm"])
 
     if profile.system == "android":
         toolroot = resolve_android_ndk(lock, ndk, cache, verify_cache=verify_cache)
@@ -329,7 +341,6 @@ def prepare_toolchain(
             raise RuntimeError(
                 "Linux builds require the pinned Ubuntu 22.04 container; run with --container"
             )
-        llvm_version = str(lock.toolchains["linux"].raw["llvm"])
         cc = Path(require_executable(f"clang-{llvm_version}"))
         cxx = Path(require_executable(f"clang++-{llvm_version}"))
         binaries = cc.parent
@@ -386,7 +397,7 @@ def prepare_toolchain(
         *sys_cfg.cflags,
     ]
     linker = f"-fuse-ld=lld-{llvm_version}" if profile.system == "linux" else "-fuse-ld=lld"
-    ldflags = [linker, *tc_cfg.common_ldflags, *sys_cfg.ldflags]
+    ldflags = [linker, f"-flto={tc_cfg.lto}", *tc_cfg.common_ldflags, *sys_cfg.ldflags]
     cxxflags = [*cflags, *sys_cfg.cxxflags]
 
     env.update(

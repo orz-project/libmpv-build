@@ -56,6 +56,9 @@ class ConfigValidationTests(unittest.TestCase):
             ("toolchains", "linux", "image", "ubuntu:22.04"),
             ("toolchains", "linux", "glibc", "2.36"),
             ("buildTools", "meson", "sha256", None),
+            ("buildTools", "ninja", "sha256", None),
+            ("buildTools", "cmake", "sha256", "not-a-digest"),
+            ("toolchains", "linux", "meson", "1.0.0"),
             ("dependencies", "mpv", "commit", None),
             ("dependencies", "mpv", "date", "not-a-date"),
             ("dependencies", "mpv", "targets", "linux-x64"),
@@ -71,6 +74,15 @@ class ConfigValidationTests(unittest.TestCase):
                 path = Path(td) / "dependencies.json"
                 path.write_text(json.dumps(candidate), encoding="utf-8")
                 with self.assertRaises(ValueError):
+                    load_lock(path)
+
+        for missing_tool in ("meson", "ninja", "cmake"):
+            with self.subTest(missing_tool=missing_tool), tempfile.TemporaryDirectory() as td:
+                candidate = copy.deepcopy(original)
+                candidate["buildTools"].pop(missing_tool)
+                path = Path(td) / "dependencies.json"
+                path.write_text(json.dumps(candidate), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, missing_tool):
                     load_lock(path)
 
     def test_lock_rejects_git_pins_with_a_tarball_parent(self) -> None:
@@ -192,9 +204,9 @@ class ConfigValidationTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         load_lock(path)
 
-    def test_lock_repository_is_not_overwritten_by_dependency_repository(self) -> None:
+    def test_lock_loads_without_top_level_repository(self) -> None:
         lock = load_lock()
-        self.assertEqual(lock.repository, "Doddddd/libmpv-build")
+        self.assertNotIn("repository", lock.raw)
         self.assertEqual(
             lock.dependencies["mpv"].repository,
             "https://github.com/mpv-player/mpv.git",
@@ -203,6 +215,18 @@ class ConfigValidationTests(unittest.TestCase):
     def test_build_config_validation(self) -> None:
         cfg = load_build_config(ROOT / "build-config.json")
         self.assertEqual(cfg.toolchain.lto, "full")
+        self.assertEqual(cfg.toolchain.meson_options, ("debug=false", "b_ndebug=true"))
+        self.assertIn("-DNDEBUG", cfg.toolchain.common_cflags)
+        self.assertIn("-fno-math-errno", cfg.toolchain.common_cflags)
+        self.assertNotIn("-fmerge-all-constants", cfg.toolchain.common_cflags)
+        self.assertNotIn("-fPIC", cfg.toolchain.common_cflags)
+        self.assertTrue(
+            any(flag.startswith("-Wl,--lto-O") for flag in cfg.toolchain.common_ldflags)
+        )
+        self.assertIn("-fPIC", cfg.toolchain.systems["linux"].cflags)
+        self.assertIn("-Wl,-z,relro", cfg.toolchain.systems["linux"].ldflags)
+        self.assertIn("-Wl,-z,now", cfg.toolchain.systems["linux"].ldflags)
+        self.assertNotIn("-fPIC", cfg.toolchain.systems["windows"].cflags)
         self.assertEqual(cfg.verify.max_glibc_version, (2, 35))
 
         def mutate(fn):
@@ -212,12 +236,23 @@ class ConfigValidationTests(unittest.TestCase):
 
         bad_configs = (
             mutate(lambda d: d["toolchain"].__setitem__("lto", "invalid")),
+            mutate(lambda d: d["toolchain"].pop("mesonOptions")),
+            mutate(lambda d: d["toolchain"].__setitem__("mesonOptions", "debug=false")),
+            mutate(lambda d: d["toolchain"].__setitem__("mesonOptions", [])),
+            mutate(lambda d: d["toolchain"].__setitem__("mesonOptions", ["debug"])),
+            mutate(lambda d: d["toolchain"].__setitem__("mesonOptions", ["debug="])),
+            mutate(
+                lambda d: d["toolchain"].__setitem__("mesonOptions", ["debug=false\n"])
+            ),
             mutate(lambda d: d["optimizationTiers"].__setitem__("dav1d", "O9")),
             mutate(lambda d: d["optimizationTiers"].pop("libass")),
             mutate(lambda d: d["recipes"].pop("mpv")),
             mutate(lambda d: d["recipes"].__setitem__("fontconfig", [])),
             mutate(lambda d: d["recipes"]["libplacebo"].pop("windows")),
             mutate(lambda d: d["recipes"].__setitem__("dav1d", {"options": []})),
+            mutate(lambda d: d["recipes"].__setitem__("dav1d", [])),
+            mutate(lambda d: d["recipes"].__setitem__("uchardet", [])),
+            mutate(lambda d: d["recipes"]["uchardet"].pop("x86_64")),
             mutate(lambda d: d["toolchain"]["march"].pop("aarch64")),
             mutate(lambda d: d["toolchain"]["systems"].pop("linux")),
             mutate(lambda d: d["verify"].__setitem__("maxGlibcVersion", [2])),
@@ -258,7 +293,8 @@ class ConfigValidationTests(unittest.TestCase):
             path = Path(td) / "build-config.json"
             path.write_text(json.dumps(candidate), encoding="utf-8")
             self.assertIn(
-                "mpv_request_log_messages", load_build_config(path).verify.required_mpv_exports
+                "mpv_request_log_messages",
+                load_build_config(path).verify.required_mpv_exports,
             )
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from libmpv_build import ROOT
-from libmpv_build.config import TARGETS, load_lock, load_profiles
+from libmpv_build.config import OPTIMIZATION_TIERS, TARGETS, load_lock, load_profiles
 from libmpv_build.recipes import (
     RECIPES,
     _ffmpeg_flags,
@@ -48,12 +48,36 @@ class ConfigAndRecipesTests(unittest.TestCase):
         self.assertIn("--enable-directwrite", profiles["windows-x64"].libass)
         self.assertIn("--disable-fontconfig", profiles["windows-x64"].libass)
 
-    def test_uchardet_uses_supported_x64_simd_instead_of_float_store_fallback(self) -> None:
-        options = RECIPES["uchardet"].signature_for(
-            load_profiles()["windows-x64"], load_lock()
-        )["options"]
-        self.assertIn("-DCHECK_SSE2=ON", options)
-        self.assertNotIn("-DCHECK_SSE2=OFF", options)
+    def test_uchardet_and_dav1d_scope_x64_options_and_disable_unused_cpp_and_cli(
+        self,
+    ) -> None:
+        profiles = load_profiles()
+        lock = load_lock()
+        for target in ("windows-x64", "android-x86_64", "linux-x64"):
+            uchardet_sig = RECIPES["uchardet"].signature_for(profiles[target], lock)
+            self.assertIn("-DCMAKE_POLICY_VERSION_MINIMUM=3.5", uchardet_sig["options"])
+            self.assertIn("-DCHECK_SSE2=ON", uchardet_sig["options"])
+            self.assertEqual(
+                uchardet_sig["extraCxxflags"], ["-fno-exceptions", "-fno-rtti"]
+            )
+            dav1d_sig = RECIPES["dav1d"].signature_for(profiles[target], lock)
+            self.assertIn("stack_alignment=16", dav1d_sig["options"])
+
+        arm_uchardet = RECIPES["uchardet"].signature_for(
+            profiles["android-arm64-v8a"], lock
+        )
+        self.assertNotIn("-DCHECK_SSE2=ON", arm_uchardet["options"])
+        self.assertEqual(
+            arm_uchardet["extraCxxflags"], ["-fno-exceptions", "-fno-rtti"]
+        )
+        arm_dav1d = RECIPES["dav1d"].signature_for(profiles["android-arm64-v8a"], lock)
+        self.assertNotIn("stack_alignment=16", arm_dav1d["options"])
+
+        fribidi_sig = RECIPES["fribidi"].signature_for(profiles["linux-x64"], lock)
+        self.assertIn("bin=false", fribidi_sig["options"])
+        placebo_sig = RECIPES["libplacebo"].signature_for(profiles["linux-x64"], lock)
+        self.assertIn("cpp_eh=none", placebo_sig["options"])
+        self.assertIn("cpp_rtti=false", placebo_sig["options"])
 
     def test_topological_order_per_target(self) -> None:
         lock = load_lock(ROOT / "dependencies.json")
@@ -208,12 +232,16 @@ class ConfigAndRecipesTests(unittest.TestCase):
             self.assertNotEqual(original, changed)
             cfg = root / "build-config.json"
             cfg_data = json.loads(cfg.read_text(encoding="utf-8"))
-            cfg_data["optimizationTiers"]["zlib-ng"] = "O2"
+            current_opt = cfg_data["optimizationTiers"]["zlib-ng"]
+            cfg_data["optimizationTiers"]["zlib-ng"] = (
+                "O3" if current_opt == "O2" else "O2"
+            )
             cfg.write_text(json.dumps(cfg_data), encoding="utf-8")
             self.assertNotEqual(changed, identity())
 
-    def test_ffmpeg_disables_debug_and_uses_o2_without_size_mode(self) -> None:
+    def test_ffmpeg_disables_debug_and_deduplicates_flags(self) -> None:
         profiles = load_profiles()
+        expected_opt = OPTIMIZATION_TIERS["ffmpeg"]
         for target, expect_hidden in (
             ("linux-x64", True),
             ("android-arm64-v8a", False),
@@ -233,14 +261,24 @@ class ConfigAndRecipesTests(unittest.TestCase):
                     objcopy="objcopy",
                     windres=None,
                     compiler_version="clang",
-                    cflags=["-Oz", "-flto=full", "-fvisibility=hidden"],
-                    cxxflags=["-Oz", "-flto=full", "-fvisibility=hidden"],
-                    ldflags=[],
+                    cflags=[
+                        "-Oz",
+                        "-flto=full",
+                        "-I/prefix/include",
+                        "-fvisibility=hidden",
+                    ],
+                    cxxflags=[
+                        "-Oz",
+                        "-flto=full",
+                        "-I/prefix/include",
+                        "-fvisibility=hidden",
+                    ],
+                    ldflags=["-fuse-ld=lld", "-flto=full", "-Wl,--lto-O2"],
                     env={"CFLAGS": "-Oz -fvisibility=hidden", "LDFLAGS": ""},
                 )
                 flags, env = _ffmpeg_flags(tc)
                 self.assertIn("--disable-debug", flags)
-                self.assertIn("--optflags=-O2", flags)
+                self.assertIn(f"--optflags=-{expected_opt}", flags)
                 self.assertIn("--enable-lto=full", flags)
                 self.assertIn("--enable-libxml2", flags)
                 self.assertNotIn("--disable-postproc", flags)
@@ -256,8 +294,28 @@ class ConfigAndRecipesTests(unittest.TestCase):
                 self.assertTrue(any(f.startswith("--enable-parser=") for f in flags))
                 self.assertTrue(any(f.startswith("--enable-bsf=") for f in flags))
                 self.assertNotIn("--enable-small", flags)
-                self.assertIn("-O2", env["CFLAGS"])
-                self.assertNotIn("-Oz", env["CFLAGS"])
+                extra_cflags_arg = next(
+                    f for f in flags if f.startswith("--extra-cflags=")
+                )
+                extra_cflags_tokens = extra_cflags_arg.removeprefix(
+                    "--extra-cflags="
+                ).split()
+                self.assertFalse(any(t.startswith("-O") for t in extra_cflags_tokens))
+                self.assertFalse(any(t.startswith("-flto") for t in extra_cflags_tokens))
+                self.assertEqual(extra_cflags_tokens.count("-I/prefix/include"), 1)
+                extra_ldflags_arg = next(
+                    f for f in flags if f.startswith("--extra-ldflags=")
+                )
+                extra_ldflags_tokens = extra_ldflags_arg.removeprefix(
+                    "--extra-ldflags="
+                ).split()
+                self.assertFalse(
+                    any(t.startswith("-flto") for t in extra_ldflags_tokens)
+                )
+                self.assertIn("-L/prefix/lib", extra_ldflags_tokens)
+                self.assertIn(f"-{expected_opt}", env["CFLAGS"])
+                if expected_opt != "Oz":
+                    self.assertNotIn("-Oz", env["CFLAGS"])
                 if expect_hidden:
                     self.assertIn("-fvisibility=hidden", env["CFLAGS"])
                 else:

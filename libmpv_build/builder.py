@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -40,7 +41,7 @@ from .process import capture_cmd, require_executable, run_cmd
 from .recipes import RECIPES, BuildContext, dependency_identity, resolve_build_order
 from .runners import write_toolchain_files
 from .sources import materialize_source_tree
-from .toolchains import ToolchainContext, prepare_toolchain
+from .toolchains import ToolchainContext, find_local_android_ndk, prepare_toolchain
 
 STAGE_COMPLETE = ".complete.json"
 
@@ -199,12 +200,35 @@ class TargetBuilder:
         self.stages_root = self.base / "stages"
         self.cache_root = root / ".cache"
 
+    def _verify_locked_build_tools(self) -> None:
+        expected_meson = self.lock.build_tools.get("meson", {}).get("version")
+        if expected_meson and capture_cmd(["meson", "--version"]) != expected_meson:
+            raise RuntimeError(
+                f"Meson must match the locked stable build-tool version ({expected_meson})"
+            )
+        expected_ninja = self.lock.build_tools.get("ninja", {}).get("version")
+        if expected_ninja:
+            actual_ninja = capture_cmd(["ninja", "--version"])
+            if not (
+                actual_ninja == expected_ninja
+                or actual_ninja.startswith(f"{expected_ninja}.")
+            ):
+                raise RuntimeError(
+                    f"Ninja must match the locked stable build-tool version ({expected_ninja})"
+                )
+        expected_cmake = self.lock.build_tools.get("cmake", {}).get("version")
+        if expected_cmake:
+            cmake_first = capture_cmd(["cmake", "--version"]).splitlines()[0]
+            match = re.fullmatch(r"cmake version (\S+)", cmake_first)
+            if not match or match.group(1) != expected_cmake:
+                raise RuntimeError(
+                    f"CMake must match the locked stable build-tool version ({expected_cmake})"
+                )
+
     def build(self) -> dict:
         _validate_loaded_build_config(self.root)
         input_snapshot = _build_inputs_snapshot(self.root)
-        expected_meson = self.lock.build_tools.get("meson", {}).get("version")
-        if expected_meson and capture_cmd(["meson", "--version"]) != expected_meson:
-            raise RuntimeError("Meson must match the locked stable build-tool version")
+        self._verify_locked_build_tools()
 
         self.base.mkdir(parents=True, exist_ok=True)
         tc: ToolchainContext = prepare_toolchain(
@@ -438,6 +462,10 @@ def run_in_container(
     reuse_image: bool = False,
     root: Path = ROOT,
 ) -> None:
+    if not ndk and any(target.startswith("android-") for target in targets):
+        local_ndk = find_local_android_ndk(lock)
+        if local_ndk is not None:
+            ndk = str(local_ndk)
     require_executable("docker")
     image = (
         _require_matching_container_image(lock, root=root)

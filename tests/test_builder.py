@@ -15,6 +15,7 @@ from unittest import mock
 
 from libmpv_build.builder import (
     STAGE_COMPLETE,
+    TargetBuilder,
     _stage_is_valid,
     assemble_prefix,
     container_image_identity,
@@ -23,7 +24,7 @@ from libmpv_build.builder import (
 from libmpv_build.config import load_lock, load_profiles
 from libmpv_build.fs import capture_tree_manifest, sha256_file
 from libmpv_build.recipes import dependency_identity
-from libmpv_build.runners import extract_staged_prefix, write_toolchain_files
+from libmpv_build.runners import extract_staged_prefix, run_cmake, write_toolchain_files
 from libmpv_build.toolchains import (
     ToolchainContext,
     _max_source_date_epoch,
@@ -230,6 +231,93 @@ class BuilderTests(unittest.TestCase):
             self.assertIn('set(CMAKE_SYSTEM_NAME "Android")', cmake)
             self.assertIn('set(CMAKE_SYSTEM_VERSION "28")', cmake)
 
+    def test_cross_native_file_uses_locked_llvm_version_instead_of_hardcoded_fallback(
+        self,
+    ) -> None:
+        profile = load_profiles()["android-arm64-v8a"]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tc = ToolchainContext(
+                profile=profile,
+                toolroot=root / "ndk",
+                prefix=root / "prefix",
+                cc="aarch64-linux-android28-clang",
+                cxx="aarch64-linux-android28-clang++",
+                ar="llvm-ar",
+                ranlib="llvm-ranlib",
+                nm="llvm-nm",
+                strip="llvm-strip",
+                objcopy="llvm-objcopy",
+                windres=None,
+                compiler_version="clang fixture",
+                cflags=[],
+                cxxflags=[],
+                ldflags=[],
+                env={},
+                llvm_version="22",
+            )
+            with (
+                mock.patch("libmpv_build.runners.shutil.which", return_value=None),
+                mock.patch(
+                    "libmpv_build.runners.require_executable", side_effect=lambda name: name
+                ),
+            ):
+                _, native_file, _ = write_toolchain_files(tc, root)
+            native = native_file.read_text(encoding="utf-8")
+            self.assertIn("clang-22", native)
+            self.assertIn("-fuse-ld=lld-22", native)
+            self.assertIn("llvm-ar-22", native)
+            self.assertNotIn("clang-21", native)
+
+    def test_builder_rejects_mismatched_locked_build_tools(self) -> None:
+        lock = load_lock()
+        profile = load_profiles()["linux-x64"]
+        expected = {
+            "meson": lock.build_tools["meson"]["version"],
+            "ninja": lock.build_tools["ninja"]["version"],
+            "cmake": f"cmake version {lock.build_tools['cmake']['version']}\nCMake suite maintained and supported by Kitware.",
+        }
+        for bad_tool, bad_output in (
+            ("meson", "1.0.0"),
+            ("ninja", "1.10.1"),
+            ("cmake", "cmake version 3.22.1\nCMake suite."),
+        ):
+            with self.subTest(bad_tool=bad_tool), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                shutil.copy2(
+                    Path(__file__).parents[1] / "build-config.json",
+                    root / "build-config.json",
+                )
+
+                def fake_capture(
+                    cmd: list[str],
+                    *,
+                    bad_tool: str = bad_tool,
+                    bad_output: str = bad_output,
+                ) -> str:
+                    tool = cmd[0]
+                    return bad_output if tool == bad_tool else expected[tool]
+
+                builder = TargetBuilder(lock, profile, jobs=1, root=root)
+                with (
+                    mock.patch("libmpv_build.builder._validate_loaded_build_config"),
+                    mock.patch("libmpv_build.builder._build_inputs_snapshot", return_value={}),
+                    mock.patch("libmpv_build.builder.capture_cmd", side_effect=fake_capture),
+                    self.assertRaisesRegex(RuntimeError, bad_tool.capitalize() if bad_tool != "cmake" else "CMake"),
+                ):
+                    builder.build()
+
+        kitware_expected = {
+            **expected,
+            "ninja": f"{lock.build_tools['ninja']['version']}.git.kitware.jobserver-pipe-1",
+        }
+        builder = TargetBuilder(lock, profile, jobs=1, root=Path(__file__).parents[1])
+        with mock.patch(
+            "libmpv_build.builder.capture_cmd",
+            side_effect=lambda cmd: kitware_expected[cmd[0]],
+        ):
+            builder._verify_locked_build_tools()
+
     def test_toolchain_context_tiered_flags_and_full_lto_files(self) -> None:
         profile = load_profiles()["linux-x64"]
         with tempfile.TemporaryDirectory() as td:
@@ -255,7 +343,7 @@ class BuilderTests(unittest.TestCase):
                     "-fvisibility=hidden",
                     "-fvisibility-inlines-hidden",
                 ],
-                ldflags=["-fuse-ld=lld-21", "-Wl,--lto-O2"],
+                ldflags=["-fuse-ld=lld-21", "-flto=full", "-Wl,--lto-O2"],
                 env={"CFLAGS": "-Oz", "CXXFLAGS": "-Oz"},
                 llvm_version="21",
             )
@@ -275,7 +363,9 @@ class BuilderTests(unittest.TestCase):
             cross = cross_file.read_text(encoding="utf-8")
             native = native_file.read_text(encoding="utf-8")
             cmake = cmake_file.read_text(encoding="utf-8")
-            self.assertIn("b_lto_mode = 'default'", cross)
+            self.assertIn("b_lto = false", cross)
+            self.assertNotIn("b_lto_mode", cross)
+            self.assertIn("-flto=full", cross)
             self.assertIn("buildtype = 'custom'", cross)
             self.assertNotIn("debug =", cross)
             self.assertNotIn("optimization =", cross)
@@ -284,6 +374,60 @@ class BuilderTests(unittest.TestCase):
             self.assertIn("-fuse-ld=lld-21", native)
             self.assertIn("-flto=full", cmake)
             self.assertNotIn("-Oz", cmake)
+
+    def test_cmake_extra_cxxflags_follow_platform_initial_flags(self) -> None:
+        profile = load_profiles()["android-arm64-v8a"]
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            tc = ToolchainContext(
+                profile=profile,
+                toolroot=root / "ndk",
+                prefix=root / "prefix",
+                cc="aarch64-linux-android28-clang",
+                cxx="aarch64-linux-android28-clang++",
+                ar="llvm-ar",
+                ranlib="llvm-ranlib",
+                nm="llvm-nm",
+                strip="llvm-strip",
+                objcopy="llvm-objcopy",
+                windres=None,
+                compiler_version="clang fixture",
+                cflags=["-Oz", "-march=armv8-a", "-flto=full"],
+                cxxflags=["-Oz", "-march=armv8-a", "-flto=full"],
+                ldflags=[],
+                env={},
+            )
+            with mock.patch("libmpv_build.runners.run_cmd") as run:
+                run_cmake(
+                    tc,
+                    root,
+                    root / "source",
+                    root / "build",
+                    root / "destdir",
+                    1,
+                    extra_cxxflags=("-fno-exceptions", "-fno-rtti"),
+                )
+            configure = run.call_args_list[0].args[0]
+            cxx_init = next(
+                argument
+                for argument in configure
+                if isinstance(argument, str)
+                and argument.startswith("-DCMAKE_CXX_FLAGS_INIT=")
+            )
+            cxx_minsize = next(
+                argument
+                for argument in configure
+                if isinstance(argument, str)
+                and argument.startswith("-DCMAKE_CXX_FLAGS_MINSIZEREL=")
+            )
+            self.assertNotIn("-fno-exceptions", cxx_init)
+            self.assertNotIn("-fno-rtti", cxx_init)
+            self.assertEqual(
+                cxx_minsize,
+                "-DCMAKE_CXX_FLAGS_MINSIZEREL=-fno-exceptions -fno-rtti -DNDEBUG",
+            )
+            self.assertIn("-Oz", cxx_init)
+            self.assertIn("-flto=full", cxx_init)
 
     def test_stage_cache_rejects_missing_or_changed_outputs_and_strict_tampering(
         self,

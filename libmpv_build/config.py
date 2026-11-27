@@ -21,8 +21,10 @@ TIERED_RECIPES = frozenset({
     "spirv-cross", "uchardet", "win-iconv", "libiconv", "wayland", "wayland-protocols",
 })
 SECTIONED_RECIPES = {
+    "dav1d": {"common", "x86_64"},
     "fontconfig": {"common", "linux", "android"},
     "libplacebo": {"common", "windows"},
+    "uchardet": {"common", "x86_64"},
 }
 
 RELEASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}")
@@ -55,6 +57,7 @@ class SystemFlags:
 class ToolchainFlagsConfig:
     lto: str
     default_opt: str
+    meson_options: tuple[str, ...]
     march: dict[str, str]
     common_cflags: tuple[str, ...]
     common_ldflags: tuple[str, ...]
@@ -168,7 +171,6 @@ class ToolchainSpec:
 @dataclass(frozen=True)
 class LockFile:
     release: str
-    repository: str
     toolchains: dict[str, ToolchainSpec]
     dependencies: dict[str, DependencySpec]
     build_tools: dict[str, Any]
@@ -277,11 +279,6 @@ def load_lock(path: Path | None = None) -> LockFile:
     release = raw.get("release", "")
     if not isinstance(release, str) or not RELEASE_RE.fullmatch(release):
         raise ValueError("Release must be a safe immutable asset name")
-    lock_repository = raw.get("repository")
-    if not isinstance(lock_repository, str) or not re.fullmatch(
-        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", lock_repository
-    ):
-        raise ValueError("Repository must be an owner/name identifier")
     toolchains_raw = _object(raw.get("toolchains"), "Toolchains")
     if set(toolchains_raw) != {"android", "windows", "linux"}:
         raise ValueError("Toolchains must define Android, Windows, and Linux")
@@ -312,8 +309,9 @@ def load_lock(path: Path | None = None) -> LockFile:
             _text(record.get("llvm"), "Linux LLVM version")
         toolchains[system] = ToolchainSpec(system=system, raw=dict(record))
     build_tools = _object(raw.get("buildTools"), "Build tools")
-    if "meson" not in build_tools:
-        raise ValueError("The Meson build tool must be locked")
+    for required_tool in ("meson", "ninja", "cmake"):
+        if required_tool not in build_tools:
+            raise ValueError(f"The {required_tool} build tool must be locked")
     for name, value in build_tools.items():
         record = _object(value, f"Build tool {name}")
         _text(record.get("version"), f"Build tool {name} version")
@@ -321,6 +319,10 @@ def load_lock(path: Path | None = None) -> LockFile:
         _digest(record.get("sha256"), f"Build tool {name}")
         if "wheelSha256" in record:
             _digest(record["wheelSha256"], f"Build tool {name} wheel")
+    if toolchains["linux"].raw["meson"] != build_tools["meson"]["version"]:
+        raise ValueError(
+            "Linux toolchain Meson version must match buildTools.meson.version"
+        )
     dependencies: dict[str, DependencySpec] = {}
     records = _object(raw.get("dependencies"), "Dependencies")
     if "mpv" not in records:
@@ -435,7 +437,6 @@ def load_lock(path: Path | None = None) -> LockFile:
     _validate_pins(dependencies)
     return LockFile(
         release=release,
-        repository=lock_repository,
         toolchains=toolchains,
         dependencies=dependencies,
         build_tools=dict(build_tools),
@@ -530,6 +531,10 @@ def load_build_config(path: Path | None = None) -> BuildConfig:
     default_opt = _text(tc_raw.get("defaultOpt"), "Toolchain defaultOpt")
     if default_opt not in OPT_LEVELS:
         raise ValueError(f"Unsupported default optimization level: {default_opt}")
+    meson_options = _text_tuple(tc_raw.get("mesonOptions"), "Toolchain mesonOptions")
+    for option in meson_options:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.+", option):
+            raise ValueError("Toolchain mesonOptions items must be Meson key=value")
     march_raw = _object(tc_raw.get("march"), "Toolchain march")
     for arch in ("aarch64", "x86_64"):
         if arch not in march_raw:
@@ -566,6 +571,7 @@ def load_build_config(path: Path | None = None) -> BuildConfig:
     toolchain_cfg = ToolchainFlagsConfig(
         lto=lto,
         default_opt=default_opt,
+        meson_options=meson_options,
         march=march,
         common_cflags=common_cflags,
         common_ldflags=common_ldflags,

@@ -1,17 +1,24 @@
 name: Locked libmpv runtimes
 
 on:
-  push:
-    branches: [master, main]
   pull_request:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Run mode
+        type: choice
+        required: true
+        default: check-build
+        options:
+          - check-only
+          - build-only
+          - check-build
       publish:
         description: Publish a GitHub Release
         type: boolean
         default: false
   schedule:
-    - cron: '0 20 * * *'
+    - cron: '30 20 * * *'
 
 permissions:
   contents: read
@@ -43,26 +50,44 @@ jobs:
         with:
           persist-credentials: true
       - name: Restore source archive cache
+        if: github.event_name == 'schedule' || inputs.mode != 'build-only'
         uses: actions/cache@v4
         with:
           path: .cache
           key: native-sources-${{ hashFiles('dependencies.json') }}
           restore-keys: native-sources-
-      - name: Check stable releases and commit the complete lock first
+      - name: Prepare dependencies for the selected mode
         id: lock
+        shell: bash
+        env:
+          RUN_MODE: ${{ github.event_name == 'schedule' && 'check-build' || inputs.mode }}
         run: |
+          set -euo pipefail
           git config user.name libmpv-build
           git config user.email libmpv-build@users.noreply.github.com
-          python3 -m libmpv_build update --write --commit --github-output "$GITHUB_OUTPUT"
+          case "$RUN_MODE" in
+            check-only)
+              python3 -m libmpv_build update --write --commit --github-output "$GITHUB_OUTPUT"
+              ;;
+            build-only)
+              release=$(jq -er '.release | select(type == "string" and length > 0)' dependencies.json)
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+              echo "release=$release" >> "$GITHUB_OUTPUT"
+              ;;
+            check-build)
+              python3 -m libmpv_build update --write --commit --github-output "$GITHUB_OUTPUT"
+              ;;
+          esac
       - name: Preserve the dependency update before any build
-        if: steps.lock.outputs.changed == 'true'
+        if: (github.event_name == 'schedule' || inputs.mode == 'check-only' || inputs.mode == 'check-build') && steps.lock.outputs.changed == 'true'
         env:
           BRANCH: ${{ github.ref_name }}
         run: git push origin "HEAD:$BRANCH"
 
   build:
     needs: [test, update]
-    if: (github.event_name == 'schedule' && needs.update.outputs.changed == 'true') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'check-only')
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     strategy:
@@ -106,7 +131,7 @@ jobs:
 
   release:
     needs: [update, build]
-    if: (github.event_name == 'schedule' && needs.update.outputs.changed == 'true') || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    if: needs.build.result == 'success' && ((github.event_name == 'schedule' && needs.update.outputs.changed == 'true') || (github.event_name == 'workflow_dispatch' && inputs.mode != 'check-only' && inputs.publish == true))
     runs-on: ubuntu-22.04
     permissions:
       contents: write

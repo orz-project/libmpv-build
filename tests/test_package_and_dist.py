@@ -30,7 +30,8 @@ class PackageAndDistTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             config = json.loads((ROOT / "build-config.json").read_text())
-            config["optimizationTiers"]["dav1d"] = "O2"
+            current_opt = config["optimizationTiers"]["dav1d"]
+            config["optimizationTiers"]["dav1d"] = "O3" if current_opt == "O2" else "O2"
             (root / "build-config.json").write_text(json.dumps(config))
             builder = TargetBuilder(lock, profile, jobs=1, root=root)
             for action in (

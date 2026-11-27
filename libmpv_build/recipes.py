@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import re
+import shlex
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -102,6 +103,13 @@ def _build_zlib_ng(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> None
     extract_staged_prefix(destdir, ctx.tc.prefix, stage_prefix)
 
 
+def _dav1d_options(cpu: str) -> list[str]:
+    options = _recipe_section("dav1d", "common")
+    if cpu == "x86_64":
+        options += _recipe_section("dav1d", "x86_64")
+    return options
+
+
 def _build_dav1d(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> None:
     run_meson(
         ctx.tc,
@@ -110,7 +118,7 @@ def _build_dav1d(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> None:
         ctx.build_dir_for("dav1d"),
         destdir,
         ctx.jobs,
-        _recipe_list("dav1d"),
+        _dav1d_options(ctx.tc.profile.cpu),
         opt=OPTIMIZATION_TIERS["dav1d"],
     )
     extract_staged_prefix(destdir, ctx.tc.prefix, stage_prefix)
@@ -221,6 +229,13 @@ def _build_libass(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> None:
     extract_staged_prefix(destdir, ctx.tc.prefix, stage_prefix)
 
 
+def _uchardet_options(cpu: str) -> list[str]:
+    options = _recipe_section("uchardet", "common")
+    if cpu == "x86_64":
+        options += _recipe_section("uchardet", "x86_64")
+    return options
+
+
 def _build_uchardet(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> None:
     source = ctx.prepare_source("uchardet")
     replace_exact(source / "CMakeLists.txt", "add_subdirectory(test)\n", "")
@@ -231,8 +246,9 @@ def _build_uchardet(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> Non
         ctx.build_dir_for("uchardet"),
         destdir,
         ctx.jobs,
-        _recipe_list("uchardet"),
+        _uchardet_options(ctx.tc.profile.cpu),
         opt=OPTIMIZATION_TIERS["uchardet"],
+        extra_cxxflags=("-fno-exceptions", "-fno-rtti"),
     )
     extract_staged_prefix(destdir, ctx.tc.prefix, stage_prefix)
     _strip_cpp_stdlib_from_pc(stage_prefix / "lib/pkgconfig/uchardet.pc")
@@ -431,7 +447,19 @@ def _ffmpeg_flags(tc: ToolchainContext) -> tuple[list[str], dict[str, str]]:
     opt = OPTIMIZATION_TIERS["ffmpeg"]
     # Android FFmpeg exports av_jni_set_java_vm without an explicit visibility attribute;
     # Full LTO and android-exports.map still internalize all other symbols at link time.
-    env = tc.env_for(opt, hidden_visibility=(tc.profile.system != "android"))
+    hidden_visibility = tc.profile.system != "android"
+    env = tc.env_for(opt, hidden_visibility=hidden_visibility)
+    extra_cflags = [
+        flag
+        for flag in tc.cflags_for(opt, hidden_visibility=hidden_visibility)
+        if not flag.startswith("-O") and not flag.startswith("-flto")
+    ]
+    include_flag = f"-I{tc.prefix}/include"
+    if include_flag not in extra_cflags:
+        extra_cflags.append(include_flag)
+    extra_ldflags = [
+        flag for flag in tc.ldflags if not flag.startswith("-flto")
+    ] + [f"-L{tc.prefix}/lib"]
     decoders = _ffmpeg_decoders(tc.profile.system)
     flags = [
         f"--prefix={tc.prefix}",
@@ -478,8 +506,8 @@ def _ffmpeg_flags(tc: ToolchainContext) -> tuple[list[str], dict[str, str]]:
         "--pkg-config=pkg-config",
         "--pkg-config-flags=--static",
         f"--arch={tc.profile.cpu}",
-        f"--extra-cflags={env['CFLAGS']} -I{tc.prefix}/include",
-        f"--extra-ldflags={env['LDFLAGS']}",
+        f"--extra-cflags={shlex.join(extra_cflags)}",
+        f"--extra-ldflags={shlex.join(extra_ldflags)}",
         *tc.profile.ffmpeg,
     ]
     if tc.profile.system in ("android", "windows"):
@@ -524,10 +552,13 @@ def _build_ffmpeg(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> None:
     build_dir = ctx.build_dir_for("ffmpeg")
     build_dir.mkdir(parents=True, exist_ok=True)
     flags, env = _ffmpeg_flags(ctx.tc)
-    run_cmd([source / "configure", *flags], cwd=build_dir, env=env)
+    ffmpeg_env = env.copy()
+    for key in ("CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
+        ffmpeg_env.pop(key, None)
+    run_cmd([source / "configure", *flags], cwd=build_dir, env=ffmpeg_env)
     _validate_ffmpeg_components(build_dir, ctx.tc.profile.system)
-    run_cmd(["make", f"-j{ctx.jobs}"], cwd=build_dir, env=env)
-    run_cmd(["make", f"DESTDIR={destdir}", "install"], cwd=build_dir, env=env)
+    run_cmd(["make", f"-j{ctx.jobs}"], cwd=build_dir, env=ffmpeg_env)
+    run_cmd(["make", f"DESTDIR={destdir}", "install"], cwd=build_dir, env=ffmpeg_env)
     extract_staged_prefix(destdir, ctx.tc.prefix, stage_prefix)
 
 
@@ -603,11 +634,12 @@ RECIPES: dict[str, Recipe] = {
     "dav1d": Recipe(
         name="dav1d",
         deps_for=_deps_none,
-        signature_for=lambda _p, _l: {
-            "options": _recipe_list("dav1d"),
+        signature_for=lambda p, _l: {
+            "options": _dav1d_options(p.cpu),
             "opt": OPTIMIZATION_TIERS["dav1d"],
         },
         build=_build_dav1d,
+        helpers=(_dav1d_options,),
     ),
     "freetype": Recipe(
         name="freetype",
@@ -681,12 +713,13 @@ RECIPES: dict[str, Recipe] = {
     "uchardet": Recipe(
         name="uchardet",
         deps_for=_deps_none,
-        signature_for=lambda _p, _l: {
-            "options": _recipe_list("uchardet"),
+        signature_for=lambda p, _l: {
+            "options": _uchardet_options(p.cpu),
+            "extraCxxflags": ["-fno-exceptions", "-fno-rtti"],
             "opt": OPTIMIZATION_TIERS["uchardet"],
         },
         build=_build_uchardet,
-        helpers=(_strip_cpp_stdlib_from_pc,),
+        helpers=(_uchardet_options, _strip_cpp_stdlib_from_pc),
     ),
     "win-iconv": Recipe(
         name="win-iconv",

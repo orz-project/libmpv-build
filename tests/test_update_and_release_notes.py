@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import os
 import subprocess
 import tarfile
 import tempfile
@@ -95,6 +96,9 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         baseline = copy.deepcopy(current)
         baseline["dependencies"]["ffmpeg"]["version"] = "9.0"
         baseline["dependencies"]["bzip2"] = {"version": "1.0.8", "commit": "0" * 40}
+        baseline["toolchains"]["linux"]["llvm"] = "21"
+        baseline["buildTools"]["cmake"]["version"] = "3.22.1"
+        baseline["buildTools"]["ninja"]["version"] = "1.10.1"
 
         notes = generate_release_notes(
             current,
@@ -106,6 +110,9 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         )
         self.assertIn("| ffmpeg | 9.0 | 9.1 |", notes)
         self.assertIn("| bzip2 | 1.0.8 | （移除） |", notes)
+        self.assertIn("| toolchain:linux:llvm | 21 | 23 |", notes)
+        self.assertIn("| build-tool:cmake | 3.22.1 | 4.5.1 |", notes)
+        self.assertIn("| build-tool:ninja | 1.10.1 | 1.13.2 |", notes)
         self.assertIn("libmpv-0.42.0-r6-linux-x64.zip", notes)
 
     def _write_headers_archive(self, archive: Path, names: set[str]) -> None:
@@ -434,22 +441,33 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
             if line.strip().startswith("if: ")
         )
         expression = expression.replace("&&", " and ").replace("||", " or ")
-        for event, changed, publish, expected in (
-            ("workflow_dispatch", "true", False, False),
-            ("workflow_dispatch", "false", False, False),
-            ("workflow_dispatch", "true", True, True),
-            ("workflow_dispatch", "false", True, True),
-            ("schedule", "true", False, True),
-            ("schedule", "false", False, False),
-            ("push", "true", False, False),
+        for event, mode, changed, publish, result, expected in (
+            ("workflow_dispatch", "check-build", "true", False, "success", False),
+            ("workflow_dispatch", "check-build", "false", False, "success", False),
+            ("workflow_dispatch", "check-build", "true", True, "success", True),
+            ("workflow_dispatch", "check-build", "false", True, "success", True),
+            ("workflow_dispatch", "build-only", "false", True, "success", True),
+            ("workflow_dispatch", "check-only", "true", True, "success", False),
+            ("workflow_dispatch", "check-build", "true", True, "failure", False),
+            ("workflow_dispatch", "check-build", "true", True, "skipped", False),
+            ("workflow_dispatch", "check-build", "true", True, "cancelled", False),
+            ("schedule", "", "true", False, "success", True),
+            ("schedule", "", "false", False, "success", False),
+            ("schedule", "", "true", False, "failure", False),
+            ("push", "", "true", False, "success", False),
         ):
-            with self.subTest(event=event, changed=changed, publish=publish):
+            with self.subTest(
+                event=event, mode=mode, changed=changed, publish=publish, result=result
+            ):
                 context = {
                     "github": SimpleNamespace(event_name=event),
                     "needs": SimpleNamespace(
-                        update=SimpleNamespace(outputs=SimpleNamespace(changed=changed))
+                        update=SimpleNamespace(
+                            outputs=SimpleNamespace(changed=changed)
+                        ),
+                        build=SimpleNamespace(result=result),
                     ),
-                    "inputs": SimpleNamespace(publish=publish),
+                    "inputs": SimpleNamespace(publish=publish, mode=mode),
                     "true": True,
                 }
                 self.assertEqual(
@@ -463,6 +481,60 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         update = workflow.split("\n  update:\n", 1)[1].split("\n  build:\n", 1)[0]
         self.assertIn("    needs: test", update.splitlines())
         self.assertIn("\n      contents: write\n", update)
+
+    def test_workflow_pushes_updates_to_selected_branch(self) -> None:
+        workflow = (ROOT / ".github/workflows/native.yml").read_text(encoding="utf-8")
+        self.assertIn("BRANCH: ${{ github.ref_name }}", workflow)
+        push_command = next(
+            line.strip()[5:]
+            for line in workflow.splitlines()
+            if line.strip().startswith("run: git push origin ")
+        )
+        branch = "feature-review"
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            origin = root / "origin.git"
+            work = root / "work"
+            subprocess.run(["git", "init", "--bare", "--quiet", str(origin)], check=True)
+            subprocess.run(["git", "init", "--quiet", str(work)], check=True)
+            for args in (
+                ("config", "user.name", "Workflow test"),
+                ("config", "user.email", "workflow@example.invalid"),
+                ("branch", "-M", branch),
+            ):
+                subprocess.run(["git", "-C", str(work), *args], check=True)
+            (work / "dependencies.json").write_text("updated\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(work), "add", "dependencies.json"], check=True)
+            subprocess.run(
+                ["git", "-C", str(work), "commit", "--quiet", "-m", "Update lock"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(work), "remote", "add", "origin", str(origin)],
+                check=True,
+            )
+
+            env = {**os.environ, "BRANCH": branch}
+            subprocess.run(
+                ["bash", "-eu", "-c", push_command],
+                cwd=work,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            remote_branches = subprocess.check_output(
+                [
+                    "git",
+                    "--git-dir",
+                    str(origin),
+                    "for-each-ref",
+                    "--format=%(refname:short)",
+                    "refs/heads",
+                ],
+                text=True,
+            ).splitlines()
+            self.assertEqual(remote_branches, [branch])
 
     def test_update_lock_preserves_tarball_dependencies_without_git(self) -> None:
         raw = load_lock(ROOT / "dependencies.json").raw

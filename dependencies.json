@@ -1,14 +1,13 @@
 {
-    "release": "0.42.0-r1",
-    "repository": "Doddddd/libmpv-build",
+    "release": "0.42.0-r2",
     "toolchains": {
         "android": {
-            "version": "r29",
-            "revision": "29.0.14206865",
-            "url": "https://dl.google.com/android/repository/android-ndk-r29-linux.zip",
-            "sha256": "4abbbcdc842f3d4879206e9695d52709603e52dd68d3c1fff04b3b5e7a308ecf",
-            "sha1": "87e2bb7e9be5d6a1c6cdf5ec40dd4e0c6d07c30b",
-            "digestEvidence": "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=android-ndk&id=f59f8cf782ea087a859213bf84301002fbe91e8e",
+            "version": "r30",
+            "revision": "30.0.16248370",
+            "url": "https://dl.google.com/android/repository/android-ndk-r30-linux.zip",
+            "sha256": "753611f410d002cfcd3f3dc2ef49aad532089d3180b436c060a90bf0fcb64df2",
+            "sha1": "5107f898313790e449e87eee2183d9a20602dee9",
+            "digestEvidence": "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=android-ndk&id=d12a34690107bdf4fbded94627750fc28412337e",
             "officialManifest": "https://dl.google.com/android/repository/repository2-3.xml"
         },
         "windows": {
@@ -21,7 +20,7 @@
             "glibc": "2.35",
             "image": "ubuntu:22.04@sha256:f64b2ffc2f10ab8f8505aa56b2664bd846cbb9df87c7e2532e30f7667021c0e6",
             "meson": "1.12.1",
-            "llvm": "21"
+            "llvm": "23"
         }
     },
     "dependencies": {
@@ -468,6 +467,17 @@
             "url": "https://files.pythonhosted.org/packages/source/m/meson/meson-1.12.1.tar.gz",
             "sha256": "ab0a6ca09f8ef70c564c8241fb5a23957886a0b53fb58412b5e07eaf07dba743",
             "wheelSha256": "930bc7542cbd9f57009e182fd014eba48cf1a0180a7b9006d2d32d8f168d8b02"
+        },
+        "ninja": {
+            "version": "1.13.2",
+            "url": "https://files.pythonhosted.org/packages/ac/92/410b7917d16ab54c04b05cc32b9284803671d91cf79d33be6009c28d4ea8/ninja-1.13.2.tar.gz",
+            "sha256": "525bfa3fc88aa30a4467df270fd5be6f9fcae8061d54d4df74ea1dc5abd5a975",
+            "wheelSha256": "65a24341b5ac09fcadcc37082660be40a94174e51a937fabf6e2cae26225fa2c"
+        },
+        "cmake": {
+            "version": "4.5.1",
+            "url": "https://github.com/Kitware/CMake/releases/download/v4.5.1/cmake-4.5.1-linux-x86_64.tar.gz",
+            "sha256": "83b71181fb62b4fe8f26067a9321448572e7a43bd04ff6c7f54a24c33698f16d"
         }
     }
 }
