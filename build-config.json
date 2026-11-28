@@ -320,6 +320,21 @@
                 "file": "video/out/wayland_common.c",
                 "old": "wl_display_create_queue_with_name(wl->display, \"image description creator queue\")",
                 "new": "wl_display_create_queue(wl->display)"
+            },
+            {
+                "file": "video/out/wayland_common.c",
+                "old": "#ifdef WL_FIXES_ACK_GLOBAL_REMOVE\n    if (!strcmp(interface, wl_fixes_interface.name) && (ver >= 2) && found++) {",
+                "new": "#if 0 /* System libwayland 1.20 lacks the optional wl_fixes_interface. */\n    if (!strcmp(interface, wl_fixes_interface.name) && (ver >= 2) && found++) {"
+            },
+            {
+                "file": "video/out/wayland_common.c",
+                "old": "#ifdef WL_FIXES_ACK_GLOBAL_REMOVE\n    if (wl->fixes)\n        wl_fixes_ack_global_remove(wl->fixes, reg, id);",
+                "new": "#if 0 /* System libwayland 1.20 lacks the optional wl_fixes_interface. */\n    if (wl->fixes)\n        wl_fixes_ack_global_remove(wl->fixes, reg, id);"
+            },
+            {
+                "file": "video/out/wayland_common.c",
+                "old": "#ifdef WL_FIXES_DESTROY\n    if (wl->fixes)\n        wl_fixes_destroy(wl->fixes);",
+                "new": "#if 0 /* System libwayland 1.20 lacks the optional wl_fixes_interface. */\n    if (wl->fixes)\n        wl_fixes_destroy(wl->fixes);"
             }
         ]
     },

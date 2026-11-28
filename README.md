@@ -20,7 +20,7 @@ python3 -m libmpv_build <build|package|verify|update|release-notes> [options]
 - 第三方库全部静态链接进运行库，仅依赖各平台的系统图形/音频接口；Windows 上 `libass` 使用 DirectWrite（不带 `fontconfig`），`libxml2` 全平台仅启用精简解析供 FFmpeg MPEG-DASH 与 Android/Linux `fontconfig` 使用
 - 分层优化 + Full LTO：`zlib-ng`、`dav1d` 使用 `-O3`，`ffmpeg`、`libass`、`libplacebo`、`mpv` 使用 `-O2`，`freetype`、`harfbuzz`、`shaderc`、`spirv-cross` 使用 `-Os`，其余第三方库使用 `-Oz`，统一启用 Full LTO（`-flto=full` 与 `-Wl,--lto-O2`）、`-fno-math-errno`、`-fvisibility=hidden`（Android FFmpeg 为保留 `av_jni_set_java_vm` 导出除外）、`-fno-semantic-interposition` 与 `--icf=safe`；Linux 启用 Full RELRO（`-Wl,-z,relro,-z,now`），`uchardet`/`libplacebo` 关闭 C++ 异常与 RTTI，`fribidi` 跳过未使用的 CLI 工具，且 x86_64 专属参数（`dav1d` `stack_alignment=16`、`uchardet` `CHECK_SSE2`）仅对 `x86_64` 生效
 - 发布策略由 `build-config.json` 统一控制：通用 `-DNDEBUG` 配合 Meson 的 `debug=false`、`b_ndebug=true` 关闭调试信息、普通开发断言和 mpv TA 内存调试，保留独立的 `mp_assert` 检查。CMake 将所选优化等级传入通用 C/C++ flags，避免 zlib-ng 将显式 `-O3` 降为 `-O2`；配方附加的 C++ 参数在平台初始化参数之后应用，确保 Android 上 `uchardet` 的异常与 RTTI 禁用设置生效，同时保留平台加固参数
-- 保留 stream callback、主流与经典全覆盖的精简 FFmpeg 解码/解复用白名单、ASS 字幕 + `uchardet` 自动编码检测（Windows 用 `win-iconv`，Android 静态合入 GNU `libiconv`）、HLS + MPEG-DASH、`screenshot-raw` 及各平台渲染/音频后端；Linux 通过前缀构建 `wayland 1.23.1`（仅保留 `wayland-scanner` 与头文件）和 `wayland-protocols 1.50` 启用完整 Wayland/EGL/dmabuf/VAAPI 支持，同时修补兼容队列创建调用以保持直接链接系统 `libwayland-*` 1.20.0（Ubuntu 22.04 基线）
+- 保留 stream callback、主流与经典全覆盖的精简 FFmpeg 解码/解复用白名单、ASS 字幕 + `uchardet` 自动编码检测（Windows 用 `win-iconv`，Android 静态合入 GNU `libiconv`）、HLS + MPEG-DASH、`screenshot-raw` 及各平台渲染/音频后端；Linux 通过前缀构建 `wayland 1.26.0`（仅保留 `wayland-scanner` 与头文件）和 `wayland-protocols 1.50` 启用完整 Wayland/EGL/dmabuf/VAAPI 支持，同时修补兼容队列创建调用并禁用可选的 `wl_fixes_interface`，以保持直接链接系统 `libwayland-*` 1.20.0（Ubuntu 22.04 基线）
 - 对外仅导出 `mpv_*` 符号（Android 额外导出 `av_jni_set_java_vm`），公开头文件见 `include/mpv/`
 
 Vulkan 后端保持关闭，但锁定版 libplacebo 的占位实现仍引用 Vulkan 公共类型，因此四平台保留 `vulkan-headers` 作为编译期依赖；它不增加运行库动态依赖
@@ -139,6 +139,10 @@ python3 -m libmpv_build release-notes --output release-notes.md
 ```
 
 `update --write --commit` 在上游有稳定更新时原子写入 `dependencies.json`，`mpv` 变更时同步更新 `include/mpv/*.h`，然后创建提交。`release-notes` 根据锁文件、`SHA256SUMS` 与基线版本生成 Markdown 发布说明。
+
+Wayland 自动更新仅在 `1.x` 系列内选择稳定版（锁定主版本 `1`，排除补丁号为 90 及以上的开发版、候选版以及 `2.x` 跨主版本升级）；构建时保留 `wayland-scanner` 与头文件，运行库继续链接 Ubuntu 22.04 的系统 `libwayland-*`，升级后仍需通过兼容性验证。
+
+为兼容系统 Wayland 1.20.0，mpv 使用旧版队列创建 API，并关闭依赖新版 `wl_fixes_interface` 的可选全局对象移除确认；Wayland/EGL/dmabuf/VAAPI 后端保持启用。
 
 ## CI
 

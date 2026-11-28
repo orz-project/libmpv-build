@@ -267,6 +267,16 @@ class ConfigValidationTests(unittest.TestCase):
                     "file", "../outside.c"
                 )
             ),
+            mutate(
+                lambda d: d["patches"]["mpvWaylandCompat"][0].__setitem__(
+                    "old", "a\rb"
+                )
+            ),
+            mutate(
+                lambda d: d["patches"]["mpvWaylandCompat"][0].__setitem__(
+                    "old", "   \n  "
+                )
+            ),
         )
         for candidate in bad_configs:
             with self.subTest(candidate=candidate), tempfile.TemporaryDirectory() as td:

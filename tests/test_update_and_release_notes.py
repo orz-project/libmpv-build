@@ -43,6 +43,36 @@ class UpdateAndReleaseNotesTests(unittest.TestCase):
         )
         self.assertEqual((tag, ver), ("v0.42.1", "0.42.1"))
 
+    def test_wayland_update_selects_stable_releases_across_series(self) -> None:
+        specification = load_lock().dependencies["wayland"].raw
+        stable_tags = ("1.23.1", "1.24.0", "1.25.0", "1.26.0")
+        excluded_tags = (
+            "1.26.90",
+            "1.26.91",
+            "1.26.93",
+            "1.26.99",
+            "1.26.100",
+            "1.27.90",
+            "1.27.0-rc1",
+            "2.0.0-rc1",
+        )
+        for additional_tags in ((), ("2.0.0",)):
+            with self.subTest(additional_tags=additional_tags):
+                tags = "".join(
+                    f"{'a' * 40}\trefs/tags/{tag}\n"
+                    for tag in (*stable_tags, *additional_tags, *excluded_tags)
+                )
+                self.assertEqual(latest_tag(specification, tags), ("1.26.0", "1.26.0"))
+
+    def test_wayland_update_rejects_development_only_tags(self) -> None:
+        specification = load_lock().dependencies["wayland"].raw
+        tags = "".join(
+            f"{'a' * 40}\trefs/tags/{tag}\n"
+            for tag in ("1.23.93", "1.26.90", "1.27.99", "2.0.0-rc1", "2.0.0")
+        )
+        with self.assertRaisesRegex(ValueError, "No stable release"):
+            latest_tag(specification, tags)
+
     def test_dependency_updates_increment_revision_and_mpv_updates_reset_it(self) -> None:
         for revision, changes, expected in (
             (1, {"ffmpeg": {"commit": "b" * 40}}, "1.2.3-r2"),

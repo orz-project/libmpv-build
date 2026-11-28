@@ -324,7 +324,7 @@ def _build_wayland(ctx: BuildContext, destdir: Path, stage_prefix: Path) -> None
         native=True,
     )
     extract_staged_prefix(destdir, ctx.tc.prefix, stage_prefix)
-    # Retain wayland-scanner, 1.23 headers, and .pc metadata; remove compiled
+    # Retain wayland-scanner, released headers, and .pc metadata; remove compiled
     # libwayland-* binaries so mpv always links Ubuntu 22.04's system 1.20 libs.
     libdir = stage_prefix / "lib"
     for pattern in ("libwayland-*.so*", "libwayland-*.a"):

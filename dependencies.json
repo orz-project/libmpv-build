@@ -1,5 +1,5 @@
 {
-    "release": "0.42.0-r2",
+    "release": "0.42.0-r3",
     "toolchains": {
         "android": {
             "version": "r30",
@@ -182,15 +182,15 @@
         },
         "wayland": {
             "repository": "https://gitlab.freedesktop.org/wayland/wayland.git",
-            "tagPattern": "(1\\.23\\.\\d+)",
+            "tagPattern": "(1\\.\\d+\\.(?:[0-9]|[1-8][0-9]))",
             "targets": [
                 "linux-x64"
             ],
-            "tag": "1.23.93",
-            "version": "1.23.93",
-            "commit": "0fa6f267f2bf7ca9f0171dc49841dfd4eaf1eef3",
-            "date": "2025-06-21T13:46:19+02:00",
-            "sha256": "eb3b691ebb41e84e5c6eac5867786744999d0b74464e1b50f092b7808c79ddfa"
+            "tag": "1.26.0",
+            "version": "1.26.0",
+            "commit": "87cc8a8728a923fc57938faa81ba0e74f34ecdc7",
+            "date": "2026-07-16T17:24:51+02:00",
+            "sha256": "a3d8c1f4f2153e53eaa7343e22b377470451f2ac8c0c0754322f2c59e5e297bc"
         },
         "wayland-protocols": {
             "repository": "https://gitlab.freedesktop.org/wayland/wayland-protocols.git",

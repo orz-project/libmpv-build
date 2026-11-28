@@ -176,7 +176,7 @@ class PatchingTests(unittest.TestCase):
             with self.assertRaises(PatchError):
                 patch_freetype_modules(src)
 
-    def test_patch_mpv_wayland_compat_replaces_named_queues_and_fails_fast(
+    def test_patch_mpv_wayland_compat_preserves_system_120_abi_and_fails_fast(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -184,6 +184,19 @@ class PatchingTests(unittest.TestCase):
             wayland_common = src / "video/out/wayland_common.c"
             wayland_common.parent.mkdir(parents=True)
             wayland_common.write_text(
+                "#ifdef WL_FIXES_ACK_GLOBAL_REMOVE\n"
+                "    if (!strcmp(interface, wl_fixes_interface.name) && (ver >= 2) && found++) {\n"
+                "        wl->fixes = wl_registry_bind(reg, id, &wl_fixes_interface, ver);\n"
+                "    }\n"
+                "#endif\n"
+                "#ifdef WL_FIXES_ACK_GLOBAL_REMOVE\n"
+                "    if (wl->fixes)\n"
+                "        wl_fixes_ack_global_remove(wl->fixes, reg, id);\n"
+                "#endif\n"
+                "#ifdef WL_FIXES_DESTROY\n"
+                "    if (wl->fixes)\n"
+                "        wl_fixes_destroy(wl->fixes);\n"
+                "#endif\n"
                 'q1 = wl_display_create_queue_with_name(wl->display, "image description info queue");\n'
                 'q2 = wl_display_create_queue_with_name(wl->display, "image description creator queue");\n',
                 encoding="utf-8",
@@ -192,6 +205,14 @@ class PatchingTests(unittest.TestCase):
             patched = wayland_common.read_text(encoding="utf-8")
             self.assertNotIn("wl_display_create_queue_with_name", patched)
             self.assertEqual(patched.count("wl_display_create_queue(wl->display)"), 2)
+            self.assertNotIn("#ifdef WL_FIXES_ACK_GLOBAL_REMOVE", patched)
+            self.assertNotIn("#ifdef WL_FIXES_DESTROY", patched)
+            self.assertEqual(
+                patched.count(
+                    "#if 0 /* System libwayland 1.20 lacks the optional wl_fixes_interface. */"
+                ),
+                3,
+            )
             with self.assertRaises(PatchError):
                 patch_mpv_wayland_compat(src)
 

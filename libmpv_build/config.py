@@ -214,6 +214,19 @@ def _text(value: Any, context: str) -> str:
     return value
 
 
+def _patch_text(value: Any, context: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or any(
+            (ord(ch) < 32 and ch not in ("\n", "\t")) or ord(ch) == 127
+            for ch in value
+        )
+    ):
+        raise ValueError(f"{context} must be a nonempty patch string")
+    return value
+
+
 def _digest(value: Any, context: str) -> None:
     if not isinstance(value, str) or not SHA256_RE.fullmatch(value):
         raise ValueError(f"{context} must be a SHA-256 digest")
@@ -645,8 +658,8 @@ def load_build_config(path: Path | None = None) -> BuildConfig:
         wl_compat.append(
             PatchReplacement(
                 file=rel_path.as_posix(),
-                old=_text(entry.get("old"), "mpvWaylandCompat.old"),
-                new=_text(entry.get("new"), "mpvWaylandCompat.new"),
+                old=_patch_text(entry.get("old"), "mpvWaylandCompat.old"),
+                new=_patch_text(entry.get("new"), "mpvWaylandCompat.new"),
             )
         )
     patches_cfg = PatchesConfig(
